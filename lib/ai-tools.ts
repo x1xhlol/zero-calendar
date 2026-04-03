@@ -9,44 +9,50 @@ import {
 import {
   createEvent,
   deleteEvent,
+  getEvent,
   getEvents,
+  searchEvents,
   getTodayEvents,
   updateEvent,
 } from "./calendar";
 import {
   analyzeBusyTimes,
   checkForConflicts,
-  findAvailableTimeSlots,
+  findAvailableTimeSlots as findAvailableTimeSlotsForDate,
 } from "./calendar-utils";
 
 export const calendarTools = {
   getEvents,
   getTodayEvents,
+  getEvent,
   createEvent,
   updateEvent,
   deleteEvent,
 
   findEvents: async (userId: string, query: string) => {
-    const now = new Date();
-    const thirtyDaysLater = new Date(now);
-    thirtyDaysLater.setDate(now.getDate() + 30);
-
-    const events = await getEvents(
-      userId,
-      now.toISOString(),
-      thirtyDaysLater.toISOString()
-    );
-    const lowerQuery = query.toLowerCase();
-
-    return events.filter(
-      (event) =>
-        event.title?.toLowerCase().includes(lowerQuery) ||
-        event.description?.toLowerCase().includes(lowerQuery) ||
-        event.location?.toLowerCase().includes(lowerQuery)
-    );
+    return await searchEvents(userId, query);
   },
 
-  findAvailableTimeSlots,
+  findAvailableTimeSlots: async (
+    userId: string,
+    date: string,
+    durationMinutes = 30
+  ) => {
+    const freeSlots = await findAvailableTimeSlotsForDate(
+      userId,
+      date,
+      durationMinutes
+    );
+
+    return {
+      freeSlots,
+      totalFreeSlots: freeSlots.length,
+      totalFreeDurationMinutes: freeSlots.reduce(
+        (total, slot) => total + slot.duration,
+        0
+      ),
+    };
+  },
   checkForConflicts,
   analyzeBusyTimes,
 

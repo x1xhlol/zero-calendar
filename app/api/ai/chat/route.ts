@@ -9,55 +9,111 @@ import {
 import { getSystemPrompt } from "@/lib/system-prompts";
 
 export const runtime = "nodejs";
+export const maxDuration = 30;
 
-const conversationContexts = new Map<
-  string,
-  Array<{ role: "user" | "assistant"; content: string }>
->();
+type ChatHistoryMessage = {
+  role: "user" | "assistant";
+  content: string;
+};
+
+type ToolExecutionContext = {
+  experimental_context?: {
+    userId?: string;
+  };
+};
+
+const chatRequestSchema = z.object({
+  currentDate: z.string().optional(),
+  message: z.string().trim().min(1).optional(),
+  messages: z
+    .array(
+      z.object({
+        role: z.enum(["user", "assistant"]),
+        content: z.string(),
+      })
+    )
+    .optional(),
+  timezone: z.string().trim().optional(),
+});
+
+function getToolUserId(context: ToolExecutionContext) {
+  const userId = context.experimental_context?.userId;
+
+  if (!userId) {
+    throw new Error("Missing authenticated user context for AI tool execution");
+  }
+
+  return userId;
+}
+
+function isDateOnly(value: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function parseRangeStart(value: string) {
+  return new Date(isDateOnly(value) ? `${value}T00:00:00` : value);
+}
+
+function parseRangeEnd(value: string) {
+  return new Date(isDateOnly(value) ? `${value}T23:59:59.999` : value);
+}
+
+function hasValidDate(value: Date) {
+  return !Number.isNaN(value.getTime());
+}
+
+function sanitizeMessages(messages: ChatHistoryMessage[]) {
+  return messages
+    .filter((message) => message.content.trim().length > 0)
+    .slice(-20);
+}
+
+function eventsOverlap(
+  aStart: Date,
+  aEnd: Date,
+  bStart: Date,
+  bEnd: Date
+) {
+  return aStart < bEnd && aEnd > bStart;
+}
 
 const tools = {
   getTodayEvents: tool({
-    description:
-      "Get all events scheduled for today. Use this to show the user what's on their calendar today.",
+    description: "Retrieve the user's events for today.",
     parameters: z.object({}),
-    execute: async (_, { userId }: { userId: string }) => {
+    execute: async (_, context) => {
+      const userId = getToolUserId(context);
       const events = await calendarTools.getTodayEvents(userId);
+
       return {
         success: true,
         events,
         count: events.length,
         message:
           events.length > 0
-            ? `Found ${events.length} event(s) for today`
-            : "No events scheduled for today",
+            ? `Found ${events.length} event(s) for today.`
+            : "No events scheduled for today.",
       };
     },
   }),
 
   getEvents: tool({
-    description:
-      "Get calendar events within a specific date range. Use this to fetch events for a particular period like next week, this month, or a custom date range.",
+    description: "Retrieve events within a date range.",
     parameters: z.object({
-      startDate: z
-        .string()
-        .describe(
-          "Start date in ISO 8601 format (e.g., 2024-12-15 or 2024-12-15T09:00:00Z)"
-        ),
-      endDate: z
-        .string()
-        .describe(
-          "End date in ISO 8601 format (e.g., 2024-12-20 or 2024-12-20T17:00:00Z)"
-        ),
+      startDate: z.string().describe("ISO date or datetime for the range start."),
+      endDate: z.string().describe("ISO date or datetime for the range end."),
     }),
-    execute: async ({ startDate, endDate }, { userId }: { userId: string }) => {
-      const start = new Date(startDate);
-      const end = new Date(endDate);
+    execute: async ({ startDate, endDate }, context) => {
+      const userId = getToolUserId(context);
+      const start = parseRangeStart(startDate);
+      const end = parseRangeEnd(endDate);
 
-      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
-        return { success: false, error: "Invalid date format", events: [] };
+      if (!hasValidDate(start) || !hasValidDate(end) || start > end) {
+        return { success: false, error: "Invalid date range.", events: [] };
       }
 
       const events = await calendarTools.getEvents(userId, start, end);
+
       return {
         success: true,
         events,
@@ -65,47 +121,33 @@ const tools = {
         dateRange: { start: startDate, end: endDate },
         message:
           events.length > 0
-            ? `Found ${events.length} event(s) in this period`
-            : "No events in this date range",
+            ? `Found ${events.length} event(s) in this period.`
+            : "No events in this date range.",
       };
     },
   }),
 
   createEvent: tool({
-    description:
-      "Create a new calendar event. Provide title, start time, end time, and optional details like description and location.",
+    description: "Create a new calendar event.",
     parameters: z.object({
-      title: z.string().describe("Event title/name (required)"),
-      startTime: z
-        .string()
-        .describe(
-          "Start time in ISO 8601 format (required, e.g., 2024-12-15T09:00:00Z)"
-        ),
-      endTime: z
-        .string()
-        .describe(
-          "End time in ISO 8601 format (required, e.g., 2024-12-15T10:00:00Z)"
-        ),
-      description: z.string().optional().describe("Event description or notes"),
-      location: z
-        .string()
-        .optional()
-        .describe("Event location (physical or virtual)"),
-      color: z.string().optional().describe("Event color for categorization"),
+      title: z.string().describe("Event title."),
+      startTime: z.string().describe("ISO datetime for when the event starts."),
+      endTime: z.string().describe("ISO datetime for when the event ends."),
+      description: z.string().optional().describe("Optional event notes."),
+      location: z.string().optional().describe("Optional event location."),
+      color: z.string().optional().describe("Optional event color/category hint."),
     }),
-    execute: async (params, { userId }: { userId: string }) => {
+    execute: async (params, context) => {
+      const userId = getToolUserId(context);
       const startTime = new Date(params.startTime);
       const endTime = new Date(params.endTime);
 
-      if (
-        Number.isNaN(startTime.getTime()) ||
-        Number.isNaN(endTime.getTime())
-      ) {
-        return { success: false, error: "Invalid date/time format" };
+      if (!hasValidDate(startTime) || !hasValidDate(endTime)) {
+        return { success: false, error: "Invalid date/time format." };
       }
 
       if (startTime >= endTime) {
-        return { success: false, error: "Start time must be before end time" };
+        return { success: false, error: "Start time must be before end time." };
       }
 
       const hasConflict = await calendarTools.checkForConflicts(
@@ -117,9 +159,10 @@ const tools = {
       if (hasConflict) {
         return {
           success: false,
-          error: "Time slot has a scheduling conflict",
+          error: "Time slot has a scheduling conflict.",
           conflict: true,
-          suggestion: "Try using findAvailableTimeSlots to find open times",
+          suggestion:
+            "Use findAvailableTimeSlots or findFreeTimeSlots to suggest open times.",
         };
       }
 
@@ -132,266 +175,301 @@ const tools = {
         params.location,
         params.color
       );
+
       return {
         success: true,
         event,
-        message: `Event "${params.title}" created for ${params.startTime}`,
+        message: `Created "${params.title}" for ${params.startTime}.`,
       };
     },
   }),
 
   updateEvent: tool({
-    description:
-      "Update an existing calendar event. Specify the event ID and which fields to update.",
+    description: "Update an existing calendar event.",
     parameters: z.object({
-      eventId: z.string().describe("ID of the event to update (required)"),
-      title: z.string().optional().describe("New event title"),
-      startTime: z
-        .string()
-        .optional()
-        .describe("New start time in ISO 8601 format"),
-      endTime: z
-        .string()
-        .optional()
-        .describe("New end time in ISO 8601 format"),
-      description: z.string().optional().describe("New event description"),
-      location: z.string().optional().describe("New event location"),
-      color: z.string().optional().describe("New event color"),
+      eventId: z.string().describe("ID of the event to update."),
+      title: z.string().optional().describe("New event title."),
+      startTime: z.string().optional().describe("New ISO start datetime."),
+      endTime: z.string().optional().describe("New ISO end datetime."),
+      description: z.string().optional().describe("New event description."),
+      location: z.string().optional().describe("New event location."),
+      color: z.string().optional().describe("New event color."),
     }),
-    execute: async (params, { userId }: { userId: string }) => {
-      const { eventId, ...updateData } = params;
+    execute: async (params, context) => {
+      const userId = getToolUserId(context);
+      const existingEvent = await calendarTools.getEvent(userId, params.eventId);
 
-      if (updateData.startTime && updateData.endTime) {
-        const startTime = new Date(updateData.startTime);
-        const endTime = new Date(updateData.endTime);
-
-        if (
-          Number.isNaN(startTime.getTime()) ||
-          Number.isNaN(endTime.getTime())
-        ) {
-          return { success: false, error: "Invalid date/time format" };
-        }
-
-        if (startTime >= endTime) {
-          return {
-            success: false,
-            error: "Start time must be before end time",
-          };
-        }
-
-        const hasConflict = await calendarTools.checkForConflicts(
-          userId,
-          updateData.startTime,
-          updateData.endTime
-        );
-
-        if (hasConflict) {
-          return {
-            success: false,
-            error: "New time slot has a scheduling conflict",
-            conflict: true,
-          };
-        }
+      if (!existingEvent) {
+        return { success: false, error: "Event not found." };
       }
 
-      const event = await calendarTools.updateEvent(
+      const nextStart = new Date(params.startTime ?? existingEvent.start);
+      const nextEnd = new Date(params.endTime ?? existingEvent.end);
+
+      if (!hasValidDate(nextStart) || !hasValidDate(nextEnd)) {
+        return { success: false, error: "Invalid date/time format." };
+      }
+
+      if (nextStart >= nextEnd) {
+        return { success: false, error: "Start time must be before end time." };
+      }
+
+      const overlappingEvents = await calendarTools.getEvents(
         userId,
-        eventId,
-        updateData
+        nextStart,
+        nextEnd
       );
+
+      const hasConflict = overlappingEvents.some((event) => {
+        if (event.id === existingEvent.id) {
+          return false;
+        }
+
+        return eventsOverlap(
+          nextStart,
+          nextEnd,
+          new Date(event.start),
+          new Date(event.end)
+        );
+      });
+
+      if (hasConflict) {
+        return {
+          success: false,
+          error: "New time slot has a scheduling conflict.",
+          conflict: true,
+        };
+      }
+
+      const event = await calendarTools.updateEvent(userId, params.eventId, {
+        ...(params.color !== undefined ? { color: params.color } : {}),
+        ...(params.description !== undefined
+          ? { description: params.description }
+          : {}),
+        ...(params.endTime !== undefined ? { end: params.endTime } : {}),
+        ...(params.location !== undefined ? { location: params.location } : {}),
+        ...(params.startTime !== undefined ? { start: params.startTime } : {}),
+        ...(params.title !== undefined ? { title: params.title } : {}),
+      });
+
       return {
         success: true,
         event,
-        message: `Event "${eventId}" updated successfully`,
+        message: `Updated "${event.title}".`,
       };
     },
   }),
 
   deleteEvent: tool({
-    description: "Delete/remove a calendar event by its ID.",
+    description: "Delete a calendar event by ID.",
     parameters: z.object({
-      eventId: z.string().describe("ID of the event to delete (required)"),
+      eventId: z.string().describe("ID of the event to delete."),
     }),
-    execute: async (params, { userId }: { userId: string }) => {
-      await calendarTools.deleteEvent(userId, params.eventId);
+    execute: async ({ eventId }, context) => {
+      const userId = getToolUserId(context);
+      const event = await calendarTools.getEvent(userId, eventId);
+
+      if (!event) {
+        return { success: false, error: "Event not found." };
+      }
+
+      await calendarTools.deleteEvent(userId, eventId);
+
       return {
         success: true,
-        message: `Event "${params.eventId}" deleted successfully`,
+        deletedEvent: event,
+        message: `Deleted "${event.title}".`,
       };
     },
   }),
 
   findEvents: tool({
-    description:
-      "Search for events by title, description, or location. Useful when user can't remember exact event details.",
+    description: "Search calendar events by title, description, or location.",
     parameters: z.object({
-      query: z.string().describe("Search query/keywords to find events"),
+      query: z.string().describe("Search query."),
     }),
-    execute: async (params, { userId }: { userId: string }) => {
-      const events = await calendarTools.findEvents(userId, params.query);
+    execute: async ({ query }, context) => {
+      const userId = getToolUserId(context);
+      const events = await calendarTools.findEvents(userId, query);
+
       return {
         success: true,
         events,
         count: events.length,
-        query: params.query,
+        query,
         message:
           events.length > 0
-            ? `Found ${events.length} event(s) matching "${params.query}"`
-            : `No events found matching "${params.query}"`,
+            ? `Found ${events.length} event(s) matching "${query}".`
+            : `No events found matching "${query}".`,
       };
     },
   }),
 
   analyzeSchedule: tool({
-    description:
-      "Analyze your calendar patterns and busy times over a date range. Provides insights about workload distribution, busiest days/hours, and scheduling patterns.",
+    description: "Analyze schedule patterns over a date range.",
     parameters: z.object({
-      startDate: z.string().describe("Analysis start date in ISO 8601 format"),
-      endDate: z.string().describe("Analysis end date in ISO 8601 format"),
+      startDate: z.string().describe("ISO date or datetime for the analysis start."),
+      endDate: z.string().describe("ISO date or datetime for the analysis end."),
     }),
-    execute: async (params, { userId }: { userId: string }) => {
-      const start = new Date(params.startDate);
-      const end = new Date(params.endDate);
+    execute: async ({ startDate, endDate }, context) => {
+      const userId = getToolUserId(context);
+      const start = parseRangeStart(startDate);
+      const end = parseRangeEnd(endDate);
 
-      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
-        return { success: false, error: "Invalid date format" };
+      if (!hasValidDate(start) || !hasValidDate(end) || start > end) {
+        return { success: false, error: "Invalid date range." };
       }
 
       const analysis = await calendarTools.analyzeSchedule(
         userId,
-        params.startDate,
-        params.endDate
+        start.toISOString(),
+        end.toISOString()
       );
+
       return {
         success: true,
         analysis,
-        message: "Schedule analysis complete",
+        message: "Schedule analysis complete.",
       };
     },
   }),
 
   findAvailableTimeSlots: tool({
-    description:
-      "Find available time slots on a specific date. Specify the duration needed and get a list of free times.",
+    description: "Find available time slots on a specific date.",
     parameters: z.object({
-      date: z
-        .string()
-        .describe("Date to search for availability in ISO 8601 format"),
+      date: z.string().describe("ISO date or datetime to search."),
       durationMinutes: z
         .number()
         .optional()
         .default(30)
-        .describe("Minimum duration needed in minutes (default: 30)"),
+        .describe("Minimum duration needed in minutes."),
     }),
-    execute: async (params, { userId }: { userId: string }) => {
+    execute: async ({ date, durationMinutes }, context) => {
+      const userId = getToolUserId(context);
       const result = await calendarTools.findAvailableTimeSlots(
         userId,
-        params.date,
-        params.durationMinutes
+        date,
+        durationMinutes
       );
+
       return {
         success: true,
         ...result,
-        date: params.date,
-        requestedDuration: params.durationMinutes,
+        date,
+        requestedDuration: durationMinutes,
         message:
           result.freeSlots.length > 0
-            ? `Found ${result.freeSlots.length} available slot(s) with at least ${params.durationMinutes} minutes free`
-            : `No available slots with ${params.durationMinutes} minutes free on this date`,
+            ? `Found ${result.freeSlots.length} available slot(s).`
+            : "No available slots found for that date.",
       };
     },
   }),
 
   checkForConflicts: tool({
-    description:
-      "Check if a proposed time slot has any scheduling conflicts. Always use this before creating or updating events.",
+    description: "Check whether a proposed time slot conflicts with existing events.",
     parameters: z.object({
-      startTime: z.string().describe("Proposed start time in ISO 8601 format"),
-      endTime: z.string().describe("Proposed end time in ISO 8601 format"),
+      startTime: z.string().describe("Proposed ISO start datetime."),
+      endTime: z.string().describe("Proposed ISO end datetime."),
     }),
-    execute: async (params, { userId }: { userId: string }) => {
+    execute: async ({ startTime, endTime }, context) => {
+      const userId = getToolUserId(context);
       const hasConflict = await calendarTools.checkForConflicts(
         userId,
-        params.startTime,
-        params.endTime
+        startTime,
+        endTime
       );
+
       return {
         success: true,
         hasConflict,
-        timeSlot: { start: params.startTime, end: params.endTime },
+        timeSlot: { start: startTime, end: endTime },
         message: hasConflict
-          ? "Conflict detected in this time slot"
-          : "Time slot is available",
+          ? "Conflict detected in this time slot."
+          : "Time slot is available.",
       };
     },
   }),
 
   suggestRescheduling: tool({
-    description:
-      "Get rescheduling suggestions for an event. Automatically finds alternative available time slots.",
+    description: "Suggest alternative slots for rescheduling an event.",
     parameters: z.object({
-      eventId: z.string().describe("ID of the event to reschedule"),
+      eventId: z.string().describe("ID of the event to reschedule."),
     }),
-    execute: async (params, { userId }: { userId: string }) => {
-      const suggestions = await calendarTools.suggestRescheduling(
-        userId,
-        params.eventId
-      );
+    execute: async ({ eventId }, context) => {
+      const userId = getToolUserId(context);
+      const suggestions = await calendarTools.suggestRescheduling(userId, eventId);
+
       return {
         success: true,
         ...suggestions,
         message: suggestions.success
-          ? `Found ${suggestions.alternativeSlots.length} alternative time slot(s) for rescheduling`
-          : "Could not find rescheduling suggestions",
+          ? `Found ${suggestions.alternativeSlots.length} alternative slot(s).`
+          : "Could not find rescheduling suggestions.",
       };
     },
   }),
 
   getCalendarAnalytics: tool({
-    description:
-      "Get detailed analytics about your calendar usage including meeting hours, categories, and busiest periods.",
+    description: "Get detailed analytics about calendar usage over a date range.",
     parameters: z.object({
-      startDate: z.string().describe("Analysis start date in ISO 8601 format"),
-      endDate: z.string().describe("Analysis end date in ISO 8601 format"),
+      startDate: z.string().describe("ISO date or datetime for the analysis start."),
+      endDate: z.string().describe("ISO date or datetime for the analysis end."),
     }),
-    execute: async (params, { userId }: { userId: string }) => {
+    execute: async ({ startDate, endDate }, context) => {
+      const userId = getToolUserId(context);
+      const start = parseRangeStart(startDate);
+      const end = parseRangeEnd(endDate);
+
+      if (!hasValidDate(start) || !hasValidDate(end) || start > end) {
+        return { success: false, error: "Invalid date range." };
+      }
+
       const analytics = await calendarTools.getCalendarAnalytics(
         userId,
-        params.startDate,
-        params.endDate
+        start.toISOString(),
+        end.toISOString()
       );
+
       return {
         success: true,
         analytics,
-        message: "Calendar analytics computed",
+        message: "Calendar analytics computed.",
       };
     },
   }),
 
   findFreeTimeSlots: tool({
-    description:
-      "Find all free time slots across a date range with minimum duration. Great for scheduling recurring meetings.",
+    description: "Find all free time slots across a date range.",
     parameters: z.object({
-      startDate: z.string().describe("Range start date in ISO 8601 format"),
-      endDate: z.string().describe("Range end date in ISO 8601 format"),
+      startDate: z.string().describe("ISO date or datetime for the range start."),
+      endDate: z.string().describe("ISO date or datetime for the range end."),
       minDurationMinutes: z
         .number()
         .optional()
         .default(30)
-        .describe("Minimum duration in minutes"),
+        .describe("Minimum duration in minutes."),
     }),
-    execute: async (params, { userId }: { userId: string }) => {
+    execute: async ({ startDate, endDate, minDurationMinutes }, context) => {
+      const userId = getToolUserId(context);
+      const start = parseRangeStart(startDate);
+      const end = parseRangeEnd(endDate);
+
+      if (!hasValidDate(start) || !hasValidDate(end) || start > end) {
+        return { success: false, error: "Invalid date range." };
+      }
+
       const result = await calendarTools.findFreeTimeSlots(
         userId,
-        params.startDate,
-        params.endDate,
-        params.minDurationMinutes
+        start.toISOString(),
+        end.toISOString(),
+        minDurationMinutes
       );
+
       return {
         success: true,
         ...result,
-        dateRange: { start: params.startDate, end: params.endDate },
-        message: `Found ${result.freeSlots.length} total free slot(s) across the period`,
+        dateRange: { start: startDate, end: endDate },
+        message: `Found ${result.freeSlots.length} free slot(s) in this range.`,
       };
     },
   }),
@@ -400,55 +478,117 @@ const tools = {
 export async function POST(req: Request) {
   try {
     const user = await getCurrentAuthUser();
-    if (!user) {
-      return new Response("Unauthorized", { status: 401 });
+
+    if (!user?.id) {
+      return Response.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { message, conversationId, timezone, currentDate } = await req.json();
+    const body = chatRequestSchema.parse(await req.json());
+    const history = sanitizeMessages(
+      body.messages ??
+        (body.message
+          ? [{ role: "user", content: body.message }]
+          : [])
+    );
 
-    let history = conversationContexts.get(conversationId) || [];
-    history.push({ role: "user", content: message });
-
-    if (history.length > 20) {
-      history = history.slice(-20);
-    }
-
-    try {
-      const result = streamText({
-        model: getOpenRouterModel(),
-        providerOptions: getOpenRouterProviderOptions(user.id),
-        system: getSystemPrompt("calendar", timezone, currentDate),
-        messages: history.map((h) => ({
-          role: h.role,
-          content: h.content,
-        })),
-        tools,
-        toolChoice: "auto",
-        maxSteps: 5,
-        temperature: 0.7,
-        maxTokens: 2000,
-        onFinish: async ({ text }) => {
-          if (text) {
-            history.push({ role: "assistant", content: text });
-            conversationContexts.set(conversationId, history);
-          }
-        },
-      });
-
-      return result.toDataStreamResponse();
-    } catch (aiError) {
-      console.error("[AI Chat] AI generation error:", aiError);
+    if (history.length === 0) {
       return Response.json(
-        {
-          error: "Failed to process request",
-          response:
-            "I'm having trouble processing your request. Please try again.",
-        },
-        { status: 500 }
+        { error: "A message is required." },
+        { status: 400 }
       );
     }
+
+    const result = streamText({
+      model: getOpenRouterModel(),
+      providerOptions: getOpenRouterProviderOptions(user.id),
+      system: getSystemPrompt("calendar", body.timezone, body.currentDate),
+      messages: history,
+      tools,
+      toolChoice: "auto",
+      maxSteps: 5,
+      maxTokens: 1600,
+      temperature: 0.2,
+      experimental_context: {
+        userId: user.id,
+      },
+    });
+
+    const encoder = new TextEncoder();
+    let didMutateCalendar = false;
+
+    const stream = new ReadableStream({
+      async start(controller) {
+        try {
+          for await (const part of result.fullStream) {
+            switch (part.type) {
+              case "text-delta":
+                controller.enqueue(
+                  encoder.encode(
+                    `data: ${JSON.stringify({
+                      type: "text",
+                      text: part.text,
+                    })}\n\n`
+                  )
+                );
+                break;
+              case "tool-result":
+                if (
+                  part.toolName === "createEvent" ||
+                  part.toolName === "updateEvent" ||
+                  part.toolName === "deleteEvent"
+                ) {
+                  didMutateCalendar = true;
+                }
+
+                controller.enqueue(
+                  encoder.encode(
+                    `data: ${JSON.stringify({
+                      type: "tool-result",
+                      toolName: part.toolName,
+                    })}\n\n`
+                  )
+                );
+                break;
+              case "error":
+                throw part.error;
+            }
+          }
+
+          controller.enqueue(
+            encoder.encode(
+              `data: ${JSON.stringify({
+                type: "done",
+                didMutateCalendar,
+              })}\n\n`
+            )
+          );
+          controller.close();
+        } catch (error) {
+          console.error("[AI Chat] AI generation error:", error);
+          controller.enqueue(
+            encoder.encode(
+              `data: ${JSON.stringify({
+                type: "error",
+                message:
+                  "I'm having trouble processing your request. Please try again.",
+              })}\n\n`
+            )
+          );
+          controller.close();
+        }
+      },
+    });
+
+    return new Response(stream, {
+      headers: {
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+        "Content-Type": "text/event-stream; charset=utf-8",
+      },
+    });
   } catch (error) {
     console.error("[AI Chat] Error processing request:", error);
+
     return Response.json(
       {
         error: error instanceof Error ? error.message : "Unknown error",

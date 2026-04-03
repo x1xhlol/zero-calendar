@@ -25,7 +25,6 @@ export function AiPanel({ userId, onClose, onEventMutated }: AiPanelProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
-  const [conversationId] = useState(() => crypto.randomUUID());
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -45,8 +44,9 @@ export function AiPanel({ userId, onClose, onEventMutated }: AiPanelProps) {
     if (!input.trim() || isStreaming) return;
 
     const userMessage = input.trim();
+    const nextMessages = [...messages, { role: "user" as const, content: userMessage }];
     setInput("");
-    setMessages((prev) => [...prev, { role: "user", content: userMessage }]);
+    setMessages(nextMessages);
     setIsStreaming(true);
 
     try {
@@ -54,14 +54,20 @@ export function AiPanel({ userId, onClose, onEventMutated }: AiPanelProps) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          message: userMessage,
-          conversationId,
+          messages: nextMessages,
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           currentDate: new Date().toISOString(),
         }),
       });
 
-      if (!response.ok) throw new Error("Failed to get response");
+      if (!response.ok) {
+        let errorMessage = "Failed to get response";
+        try {
+          const data = await response.json();
+          errorMessage = data.response || data.error || errorMessage;
+        } catch {}
+        throw new Error(errorMessage);
+      }
 
       if (response.headers.get("content-type")?.includes("text/event-stream") && response.body) {
         setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
@@ -69,28 +75,55 @@ export function AiPanel({ userId, onClose, onEventMutated }: AiPanelProps) {
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let accumulated = "";
+        let buffer = "";
 
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
 
-          const chunk = decoder.decode(value, { stream: true });
-          const lines = chunk.split("\n");
+          buffer += decoder.decode(value, { stream: true });
+          const events = buffer.split("\n\n");
+          buffer = events.pop() || "";
 
-          for (const line of lines) {
-            if (line.startsWith("0:")) {
-              try {
-                const text = JSON.parse(line.slice(2));
-                accumulated += text;
+          for (const rawEvent of events) {
+            const line = rawEvent
+              .split("\n")
+              .find((eventLine) => eventLine.startsWith("data: "));
+
+            if (!line) {
+              continue;
+            }
+
+            try {
+              const event = JSON.parse(line.slice(6)) as
+                | { type: "text"; text: string }
+                | { type: "tool-result"; toolName: string }
+                | { type: "done"; didMutateCalendar: boolean }
+                | { type: "error"; message: string };
+
+              if (event.type === "text") {
+                accumulated += event.text;
                 setMessages((prev) => {
                   const updated = [...prev];
-                  updated[updated.length - 1] = { role: "assistant", content: accumulated };
+                  updated[updated.length - 1] = {
+                    role: "assistant",
+                    content: accumulated,
+                  };
                   return updated;
                 });
-              } catch { /* non-text chunk */ }
-            }
-            if (line.startsWith("9:") || line.startsWith("d:")) {
-              onEventMutated?.();
+              }
+
+              if (event.type === "done" && event.didMutateCalendar) {
+                onEventMutated?.();
+              }
+
+              if (event.type === "error") {
+                throw new Error(event.message);
+              }
+            } catch (error) {
+              if (error instanceof Error) {
+                throw error;
+              }
             }
           }
         }
@@ -101,10 +134,16 @@ export function AiPanel({ userId, onClose, onEventMutated }: AiPanelProps) {
           onEventMutated?.();
         }
       }
-    } catch {
+    } catch (error) {
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: "Sorry, I encountered an error. Please try again." },
+        {
+          role: "assistant",
+          content:
+            error instanceof Error
+              ? error.message
+              : "Sorry, I encountered an error. Please try again.",
+        },
       ]);
     } finally {
       setIsStreaming(false);
