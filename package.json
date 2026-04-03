@@ -1,5 +1,5 @@
 {
-  "name": "my-v0-project",
+  "name": "zero-calendar",
   "version": "0.1.0",
   "private": true,
   "packageManager": "bun@1.3.11",
