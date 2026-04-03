@@ -35,8 +35,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import type React from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -920,7 +919,7 @@ export function ModernCalendarView({
         {rightPanel !== "none" && (
           isMobile ? (
             /* Mobile: bottom sheet overlay */
-            <React.Fragment key="mobile-panel">
+            <Fragment key="mobile-panel">
               <motion.div
                 className="fixed inset-0 z-40 touch-none bg-black/50"
                 initial={{ opacity: 0 }}
@@ -943,7 +942,7 @@ export function ModernCalendarView({
                   {panelContent}
                 </div>
               </motion.div>
-            </React.Fragment>
+            </Fragment>
           ) : (
             /* Desktop: side panel */
             <motion.div
