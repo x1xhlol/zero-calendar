@@ -19,7 +19,7 @@ export default async function CalendarPage() {
   }
 
   return (
-    <div className="h-screen overflow-hidden bg-background">
+    <div className="h-dvh overflow-hidden bg-background">
       <ModernCalendarView
         initialCategories={categories}
         initialEvents={events}
