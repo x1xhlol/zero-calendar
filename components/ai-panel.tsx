@@ -21,8 +21,14 @@ interface AiPanelProps {
 
 const spring = { type: "spring", stiffness: 300, damping: 30 };
 
-/** pre_text: stream open but only tool calls / no assistant text yet — hide typing dots */
-type AssistantStreamPhase = "idle" | "pre_text" | "text";
+type AssistantStreamPhase = "idle" | "waiting" | "text";
+
+const streamdownAnimation = {
+  animation: "fadeIn",
+  duration: 260,
+  easing: "ease-out",
+  sep: "char",
+} as const;
 
 export function AiPanel({ userId, onClose, onEventMutated }: AiPanelProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -45,22 +51,41 @@ export function AiPanel({ userId, onClose, onEventMutated }: AiPanelProps) {
     inputRef.current?.focus();
   }, []);
 
+  const setLatestAssistantMessage = useCallback((content: string) => {
+    setMessages((prev) => {
+      const updated = [...prev];
+
+      for (let i = updated.length - 1; i >= 0; i -= 1) {
+        if (updated[i]?.role === "assistant") {
+          updated[i] = { role: "assistant", content };
+          return updated;
+        }
+      }
+
+      return [...updated, { role: "assistant", content }];
+    });
+  }, []);
+
   const sendMessage = async () => {
     if (!input.trim() || isStreaming) return;
 
     const userMessage = input.trim();
-    const nextMessages = [...messages, { role: "user" as const, content: userMessage }];
+    const nextMessages = [
+      ...messages,
+      { role: "user" as const, content: userMessage },
+      { role: "assistant" as const, content: "" },
+    ];
     setInput("");
     setMessages(nextMessages);
     setIsStreaming(true);
-    setAssistantStreamPhase("idle");
+    setAssistantStreamPhase("waiting");
 
     try {
       const response = await fetch("/api/ai/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          messages: nextMessages,
+          messages: nextMessages.filter((message) => message.content.trim().length > 0),
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           currentDate: new Date().toISOString(),
         }),
@@ -76,9 +101,6 @@ export function AiPanel({ userId, onClose, onEventMutated }: AiPanelProps) {
       }
 
       if (response.headers.get("content-type")?.includes("text/event-stream") && response.body) {
-        setAssistantStreamPhase("pre_text");
-        setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
-
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let accumulated = "";
@@ -111,14 +133,7 @@ export function AiPanel({ userId, onClose, onEventMutated }: AiPanelProps) {
               if (event.type === "text") {
                 accumulated += event.text;
                 setAssistantStreamPhase("text");
-                setMessages((prev) => {
-                  const updated = [...prev];
-                  updated[updated.length - 1] = {
-                    role: "assistant",
-                    content: accumulated,
-                  };
-                  return updated;
-                });
+                setLatestAssistantMessage(accumulated);
               }
 
               if (event.type === "done" && event.didMutateCalendar) {
@@ -137,22 +152,19 @@ export function AiPanel({ userId, onClose, onEventMutated }: AiPanelProps) {
         }
       } else {
         const data = await response.json();
-        setMessages((prev) => [...prev, { role: "assistant", content: data.response }]);
+        setAssistantStreamPhase("text");
+        setLatestAssistantMessage(data.response);
         if (data.response?.includes("created") || data.response?.includes("deleted") || data.response?.includes("updated")) {
           onEventMutated?.();
         }
       }
     } catch (error) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content:
-            error instanceof Error
-              ? error.message
-              : "Sorry, I encountered an error. Please try again.",
-        },
-      ]);
+      setAssistantStreamPhase("text");
+      setLatestAssistantMessage(
+        error instanceof Error
+          ? error.message
+          : "Sorry, I encountered an error. Please try again."
+      );
     } finally {
       setIsStreaming(false);
       setAssistantStreamPhase("idle");
@@ -229,6 +241,10 @@ export function AiPanel({ userId, onClose, onEventMutated }: AiPanelProps) {
                 <motion.div
                   className={cn(
                     "max-w-[85%] rounded-2xl px-3.5 py-2.5 text-[13px] leading-relaxed",
+                    isLatest &&
+                      msg.role === "assistant" &&
+                      assistantStreamPhase === "waiting" &&
+                      "min-w-[3.5rem]",
                     msg.role === "user"
                       ? "bg-blue-500/90 text-white"
                       : "bg-white/[0.04] text-white/80"
@@ -240,13 +256,18 @@ export function AiPanel({ userId, onClose, onEventMutated }: AiPanelProps) {
                     <motion.div
                       animate={{ opacity: msg.content.length > 0 ? 1 : 0.45 }}
                       className="will-change-[opacity]"
-                      transition={{ duration: 0.22, ease: "easeOut" }}
+                      transition={{ duration: 0.3, ease: "easeOut" }}
                     >
-                      <Streamdown className="max-w-none text-[13px] [&_[data-streamdown='link']]:text-cyan-400">
+                      <Streamdown
+                        animated={streamdownAnimation}
+                        caret="block"
+                        className="max-w-none text-[13px] [&_[data-streamdown='link']]:text-cyan-400"
+                        isAnimating={isStreaming && assistantStreamPhase === "text" && isLatest}
+                      >
                         {msg.content}
                       </Streamdown>
                       <AnimatePresence>
-                        {isStreaming && assistantStreamPhase === "text" && isLatest && (
+                        {isStreaming && assistantStreamPhase === "waiting" && isLatest && (
                           <motion.div
                             animate={{ opacity: 1, y: 0 }}
                             className="mt-2 flex gap-1"
