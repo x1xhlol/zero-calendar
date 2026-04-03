@@ -41,4 +41,25 @@ export default defineSchema({
   })
     .index("by_user", ["userId"])
     .index("by_user_categoryId", ["userId", "categoryId"]),
+
+  invitations: defineTable({
+    token: v.string(),
+    eventId: v.string(),
+    organizerUserId: v.string(),
+    organizerName: v.string(),
+    organizerEmail: v.string(),
+    inviteeEmail: v.string(),
+    eventTitle: v.string(),
+    eventStart: v.string(),
+    eventEnd: v.string(),
+    eventLocation: v.optional(v.string()),
+    eventCalendarId: v.optional(v.string()),
+    status: v.string(),
+    respondedAt: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index("by_token", ["token"])
+    .index("by_event", ["eventId"])
+    .index("by_invitee", ["inviteeEmail"])
+    .index("by_event_invitee", ["eventId", "inviteeEmail"]),
 });

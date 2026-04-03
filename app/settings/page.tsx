@@ -15,7 +15,7 @@ export default async function SettingsPage() {
   const preferences = await getUserPreferences(user.id);
 
   return (
-    <div className="h-screen overflow-hidden bg-background">
+    <div className="min-h-dvh overflow-x-hidden bg-background">
       <ModernSettingsForm
         initialPreferences={preferences}
         userEmail={user.email}

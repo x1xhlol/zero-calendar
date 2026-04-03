@@ -27,17 +27,19 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import {
+  type Participant,
+  ParticipantsInput,
+} from "@/components/ui/participants-input";
+import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ToastAction } from "@/components/ui/toast";
-import { ParticipantsInput } from "@/components/ui/participants-input";
 import { Textarea } from "@/components/ui/textarea";
+import { ToastAction } from "@/components/ui/toast";
 import { useToast } from "@/hooks/use-toast";
-import { cn } from "@/lib/utils";
 import type { CalendarEvent } from "@/types/calendar";
 
 const formSchema = z.object({
@@ -45,7 +47,16 @@ const formSchema = z.object({
   description: z.string().optional(),
   start: z.string().min(1, "Start time is required"),
   end: z.string().min(1, "End time is required"),
-  participants: z.array(z.string()).default([]),
+  participants: z
+    .array(
+      z.object({
+        email: z.string(),
+        status: z
+          .enum(["pending", "accepted", "declined", "needs-action"])
+          .optional(),
+      })
+    )
+    .default([]),
   calendarId: z.string().optional(),
   location: z.string().optional(),
 });
@@ -99,13 +110,25 @@ export function EventDetailPanel({
 
   const defaultStart = selectedDate
     ? format(
-        new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate(), 9, 0),
+        new Date(
+          selectedDate.getFullYear(),
+          selectedDate.getMonth(),
+          selectedDate.getDate(),
+          9,
+          0
+        ),
         "yyyy-MM-dd'T'HH:mm"
       )
     : "";
   const defaultEnd = selectedDate
     ? format(
-        new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate(), 10, 0),
+        new Date(
+          selectedDate.getFullYear(),
+          selectedDate.getMonth(),
+          selectedDate.getDate(),
+          10,
+          0
+        ),
         "yyyy-MM-dd'T'HH:mm"
       )
     : "";
@@ -128,9 +151,15 @@ export function EventDetailPanel({
       form.reset({
         title: event.title || "",
         description: event.description || "",
-        start: event.start ? format(new Date(event.start), "yyyy-MM-dd'T'HH:mm") : "",
+        start: event.start
+          ? format(new Date(event.start), "yyyy-MM-dd'T'HH:mm")
+          : "",
         end: event.end ? format(new Date(event.end), "yyyy-MM-dd'T'HH:mm") : "",
-        participants: event.attendees?.map((attendee) => attendee.email) || [],
+        participants:
+          event.attendees?.map((attendee) => ({
+            email: attendee.email,
+            status: (attendee.status ?? "pending") as Participant["status"],
+          })) || [],
         calendarId: event.calendarId || defaultGoogleCalendarId,
         location: event.location || "",
       });
@@ -148,7 +177,10 @@ export function EventDetailPanel({
   }, [event, mode, form, defaultStart, defaultEnd, defaultGoogleCalendarId]);
 
   useEffect(() => {
-    if (!isCreating || !defaultGoogleCalendarId || form.getValues("calendarId")) {
+    if (
+      !(isCreating && defaultGoogleCalendarId) ||
+      form.getValues("calendarId")
+    ) {
       return;
     }
 
@@ -168,13 +200,19 @@ export function EventDetailPanel({
 
   async function onSubmit(values: z.infer<typeof formSchema>) {
     if (!userId) {
-      toast({ title: "Sign in required", description: "Please sign in to manage events", variant: "destructive" });
+      toast({
+        title: "Sign in required",
+        description: "Please sign in to manage events",
+        variant: "destructive",
+      });
       return;
     }
 
     setIsLoading(true);
     try {
-      const url = isCreating ? "/api/calendar/events" : `/api/calendar/events/${event?.id}`;
+      const url = isCreating
+        ? "/api/calendar/events"
+        : `/api/calendar/events/${event?.id}`;
       const method = isCreating ? "POST" : "PATCH";
 
       const response = await fetch(url, {
@@ -188,37 +226,89 @@ export function EventDetailPanel({
           end: values.end,
           location: values.location,
           calendarId: values.calendarId || undefined,
-          attendees: values.participants.map((email) => ({ email })),
+          attendees: values.participants.map((p) => ({
+            email: p.email,
+            status: p.status,
+          })),
           pushToGoogle: true,
         }),
       });
 
-      if (!response.ok) throw new Error("Failed to save event");
+      if (!response.ok) {
+        throw new Error("Failed to save event");
+      }
+
+      const { event: savedEvent } = await response.json();
+      const savedEventId = savedEvent?.id || event?.id;
+
+      const newParticipants = values.participants.filter(
+        (p) => p.status === "pending" || !p.status
+      );
+
+      if (newParticipants.length > 0 && savedEventId) {
+        try {
+          await fetch("/api/invitations/send", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              eventId: savedEventId,
+              eventTitle: values.title,
+              eventStart: values.start,
+              eventEnd: values.end,
+              eventLocation: values.location,
+              eventCalendarId: values.calendarId,
+              invitees: newParticipants.map((p) => p.email),
+            }),
+          });
+        } catch {
+          console.error("Failed to send invitations");
+        }
+      }
+
+      const invitedCount = newParticipants.length;
+      const inviteNote =
+        invitedCount > 0
+          ? ` — ${invitedCount} invite${invitedCount > 1 ? "s" : ""} sent`
+          : "";
 
       toast({
         title: isCreating ? "Event created" : "Event updated",
-        description: `Your event has been ${isCreating ? "created" : "updated"}`,
+        description: `Your event has been ${isCreating ? "created" : "updated"}${inviteNote}`,
       });
 
-      if (isCreating) onEventCreated();
-      else onEventUpdated();
+      if (isCreating) {
+        onEventCreated();
+      } else {
+        onEventUpdated();
+      }
       onClose();
     } catch {
-      toast({ title: "Error", description: "Failed to save event", variant: "destructive" });
+      toast({
+        title: "Error",
+        description: "Failed to save event",
+        variant: "destructive",
+      });
     } finally {
       setIsLoading(false);
     }
   }
 
   async function handleDelete() {
-    if (!event || !userId) return;
+    if (!(event && userId)) {
+      return;
+    }
 
     setIsLoading(true);
     try {
-      const response = await fetch(`/api/calendar/events/${event.id}?userId=${userId}&pushToGoogle=true`, {
-        method: "DELETE",
-      });
-      if (!response.ok) throw new Error("Failed to delete");
+      const response = await fetch(
+        `/api/calendar/events/${event.id}?userId=${userId}&pushToGoogle=true`,
+        {
+          method: "DELETE",
+        }
+      );
+      if (!response.ok) {
+        throw new Error("Failed to delete");
+      }
 
       toast({
         title: "Event deleted",
@@ -227,7 +317,7 @@ export function EventDetailPanel({
           <ToastAction
             altText="Undo event deletion"
             onClick={() => {
-              void restoreDeletedEvent(event);
+              restoreDeletedEvent(event).catch(console.error);
             }}
           >
             Undo
@@ -237,7 +327,11 @@ export function EventDetailPanel({
       onEventDeleted();
       onClose();
     } catch {
-      toast({ title: "Error", description: "Failed to delete event", variant: "destructive" });
+      toast({
+        title: "Error",
+        description: "Failed to delete event",
+        variant: "destructive",
+      });
     } finally {
       setIsLoading(false);
     }
@@ -299,13 +393,13 @@ export function EventDetailPanel({
       initial={{ x: 80, opacity: 0 }}
       transition={spring}
     >
-      <div className="flex items-center justify-between border-b border-white/[0.06] px-5 py-4">
+      <div className="flex items-center justify-between border-white/[0.06] border-b px-5 py-4">
         <div>
-          <h3 className="text-sm font-semibold text-white/90">
+          <h3 className="font-semibold text-sm text-white/90">
             {isCreating ? "New Event" : isEditing ? "Edit Event" : event?.title}
           </h3>
           {dateDisplay && (
-            <p className="mt-0.5 text-xs text-white/40">{dateDisplay}</p>
+            <p className="mt-0.5 text-white/40 text-xs">{dateDisplay}</p>
           )}
         </div>
         <Button
@@ -319,7 +413,10 @@ export function EventDetailPanel({
       </div>
 
       <Form {...form}>
-        <form className="flex min-h-0 flex-1 flex-col" onSubmit={form.handleSubmit(onSubmit)}>
+        <form
+          className="flex min-h-0 flex-1 flex-col"
+          onSubmit={form.handleSubmit(onSubmit)}
+        >
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-5 py-4">
             <FormField
               control={form.control}
@@ -328,12 +425,14 @@ export function EventDetailPanel({
                 <FormItem>
                   <FormControl>
                     <Input
-                      className="h-10 border-0 bg-transparent px-0 text-lg font-semibold text-white placeholder:text-white/25 focus-visible:ring-0"
+                      className="h-10 border-0 bg-transparent px-0 font-semibold text-lg text-white placeholder:text-white/25 focus-visible:ring-0"
                       placeholder="Event title"
                       {...field}
                       ref={(e) => {
                         field.ref(e);
-                        (titleRef as React.MutableRefObject<HTMLInputElement | null>).current = e;
+                        (
+                          titleRef as React.MutableRefObject<HTMLInputElement | null>
+                        ).current = e;
                       }}
                     />
                   </FormControl>
@@ -352,10 +451,10 @@ export function EventDetailPanel({
                       <div className={glassRow}>
                         <ClockIcon className="size-4 shrink-0 text-white/30" />
                         <DateTimePicker
+                          onChange={field.onChange}
                           showIcon={false}
                           triggerClassName="h-full min-h-0 flex-1 rounded-none border-0 bg-transparent px-0 text-xs shadow-none hover:bg-transparent focus-visible:ring-0"
                           value={field.value}
-                          onChange={field.onChange}
                         />
                       </div>
                     </FormControl>
@@ -372,10 +471,10 @@ export function EventDetailPanel({
                       <div className={glassRow}>
                         <ClockIcon className="size-4 shrink-0 text-white/30" />
                         <DateTimePicker
+                          onChange={field.onChange}
                           showIcon={false}
                           triggerClassName="h-full min-h-0 flex-1 rounded-none border-0 bg-transparent px-0 text-xs shadow-none hover:bg-transparent focus-visible:ring-0"
                           value={field.value}
-                          onChange={field.onChange}
                         />
                       </div>
                     </FormControl>
@@ -403,7 +502,7 @@ export function EventDetailPanel({
                           <div className={glassRow}>
                             <MapPinIcon className="size-4 shrink-0 text-white/30" />
                             <input
-                              className="min-h-0 min-w-0 flex-1 bg-transparent py-0 text-xs leading-normal text-white/80 outline-none placeholder:text-white/25"
+                              className="min-h-0 min-w-0 flex-1 bg-transparent py-0 text-white/80 text-xs leading-normal outline-none placeholder:text-white/25"
                               placeholder="Add location"
                               {...field}
                             />
@@ -427,15 +526,16 @@ export function EventDetailPanel({
                               value={field.value || defaultGoogleCalendarId}
                             >
                               <FormControl>
-                                <SelectTrigger
-                                  className="!h-full min-h-0 min-w-0 flex-1 justify-between gap-2 rounded-none border-0 bg-transparent px-0 py-0 text-xs text-white/80 shadow-none focus:ring-0 [&_svg]:size-3.5 [&_svg]:text-white/40"
-                                >
+                                <SelectTrigger className="!h-full min-h-0 min-w-0 flex-1 justify-between gap-2 rounded-none border-0 bg-transparent px-0 py-0 text-white/80 text-xs shadow-none focus:ring-0 [&_svg]:size-3.5 [&_svg]:text-white/40">
                                   <SelectValue placeholder="Calendar" />
                                 </SelectTrigger>
                               </FormControl>
                               <SelectContent className="rounded-xl border border-white/[0.12] shadow-2xl">
                                 {googleCalendars.map((calendar) => (
-                                  <SelectItem key={calendar.id} value={calendar.id}>
+                                  <SelectItem
+                                    key={calendar.id}
+                                    value={calendar.id}
+                                  >
                                     {calendar.summary}
                                   </SelectItem>
                                 ))}
@@ -454,18 +554,18 @@ export function EventDetailPanel({
                     render={({ field }) => (
                       <FormItem>
                         <FormControl>
-                          <div className="space-y-2">
-                            <div className={cn(glassRow, "min-h-10 items-start py-2")}>
-                              <UsersIcon className="mt-1 size-4 shrink-0 text-white/30" />
+                          <div className="space-y-1.5">
+                            <div className="flex items-start gap-3">
+                              <UsersIcon className="mt-3 size-4 shrink-0 text-white/30" />
                               <ParticipantsInput
-                                className="min-h-0 flex-1 border-0 bg-transparent p-0"
+                                className="flex-1 border-white/[0.06]"
+                                onChange={field.onChange}
                                 placeholder="Add participants by email"
                                 value={field.value}
-                                onChange={field.onChange}
                               />
                             </div>
-                            <p className="px-1 text-[10px] text-white/30">
-                              Press Enter or comma to add each participant.
+                            <p className="pl-7 text-[10px] text-white/25">
+                              Invitations will be sent via email.
                             </p>
                           </div>
                         </FormControl>
@@ -483,7 +583,7 @@ export function EventDetailPanel({
                           <div className="liquid-glass-input flex min-w-0 items-start gap-3 rounded-lg px-3 py-2.5">
                             <TextIcon className="mt-1 size-4 shrink-0 text-white/30" />
                             <Textarea
-                              className="field-sizing-fixed min-h-[4.5rem] min-w-0 flex-1 resize-none rounded-none border-0 bg-transparent p-0 py-0.5 pl-0.5 text-xs leading-relaxed text-white/80 shadow-none placeholder:text-white/25 focus-visible:ring-0"
+                              className="field-sizing-fixed min-h-[4.5rem] min-w-0 flex-1 resize-none rounded-none border-0 bg-transparent p-0 py-0.5 pl-0.5 text-white/80 text-xs leading-relaxed shadow-none placeholder:text-white/25 focus-visible:ring-0"
                               placeholder="Add notes"
                               {...field}
                             />
@@ -509,11 +609,11 @@ export function EventDetailPanel({
             )}
           </div>
 
-          <div className="border-t border-white/[0.06] px-5 py-3">
+          <div className="border-white/[0.06] border-t px-5 py-3">
             <div className="flex items-center gap-2">
               {isEditing && (
                 <Button
-                  className="h-8 rounded-lg border border-red-500/20 bg-red-500/10 px-3 text-xs text-red-400 hover:bg-red-500/20"
+                  className="h-8 rounded-lg border border-red-500/20 bg-red-500/10 px-3 text-red-400 text-xs hover:bg-red-500/20"
                   disabled={isLoading}
                   onClick={handleDelete}
                   type="button"
@@ -534,7 +634,7 @@ export function EventDetailPanel({
                   Cancel
                 </Button>
                 <Button
-                  className="h-8 rounded-lg bg-white px-4 text-xs font-medium text-black hover:bg-white/90"
+                  className="h-8 rounded-lg bg-white px-4 font-medium text-black text-xs hover:bg-white/90"
                   disabled={isLoading}
                   type="submit"
                 >
