@@ -11,6 +11,18 @@ export const getByUserId = query({
   },
 });
 
+export const getByGoogleWatchChannelId = query({
+  args: { googleWatchChannelId: v.string() },
+  handler: async (ctx, { googleWatchChannelId }) => {
+    return await ctx.db
+      .query("users")
+      .withIndex("by_googleWatchChannelId", (q) =>
+        q.eq("googleWatchChannelId", googleWatchChannelId)
+      )
+      .unique();
+  },
+});
+
 export const upsert = mutation({
   args: {
     userId: v.string(),
@@ -23,6 +35,12 @@ export const upsert = mutation({
     expiresAt: v.optional(v.number()),
     preferences: v.optional(v.any()),
     lastGoogleSync: v.optional(v.number()),
+    googleSyncToken: v.optional(v.string()),
+    googleWatchCalendarId: v.optional(v.string()),
+    googleWatchChannelId: v.optional(v.string()),
+    googleWatchExpiration: v.optional(v.number()),
+    googleWatchResourceId: v.optional(v.string()),
+    googleWatchToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const existing = await ctx.db

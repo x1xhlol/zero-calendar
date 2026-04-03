@@ -5,6 +5,12 @@ interface UserRecord {
   accessToken?: string;
   email?: string;
   expiresAt?: number;
+  googleSyncToken?: string;
+  googleWatchCalendarId?: string;
+  googleWatchChannelId?: string;
+  googleWatchExpiration?: number;
+  googleWatchResourceId?: string;
+  googleWatchToken?: string;
   image?: string;
   lastGoogleSync?: number;
   name?: string;
@@ -64,6 +70,12 @@ export async function getUserRecord(
     preferences:
       (user.preferences as Record<string, unknown> | undefined) ?? {},
     lastGoogleSync: user.lastGoogleSync,
+    googleSyncToken: user.googleSyncToken,
+    googleWatchCalendarId: user.googleWatchCalendarId,
+    googleWatchChannelId: user.googleWatchChannelId,
+    googleWatchExpiration: user.googleWatchExpiration,
+    googleWatchResourceId: user.googleWatchResourceId,
+    googleWatchToken: user.googleWatchToken,
   };
 }
 
@@ -74,6 +86,39 @@ export async function upsertUserRecord(user: UserRecord) {
 
 export async function getUserPreferences(userId: string) {
   return (await getUserRecord(userId))?.preferences ?? {};
+}
+
+export async function getUserRecordByGoogleWatchChannelId(
+  googleWatchChannelId: string
+): Promise<UserRecord | null> {
+  const client = getConvexClient();
+  const user = await client.query(api.users.getByGoogleWatchChannelId, {
+    googleWatchChannelId,
+  });
+
+  if (!user) {
+    return null;
+  }
+
+  return {
+    userId: user.userId,
+    email: user.email,
+    name: user.name,
+    image: user.image,
+    provider: user.provider,
+    accessToken: user.accessToken,
+    refreshToken: user.refreshToken,
+    expiresAt: user.expiresAt,
+    preferences:
+      (user.preferences as Record<string, unknown> | undefined) ?? {},
+    lastGoogleSync: user.lastGoogleSync,
+    googleSyncToken: user.googleSyncToken,
+    googleWatchCalendarId: user.googleWatchCalendarId,
+    googleWatchChannelId: user.googleWatchChannelId,
+    googleWatchExpiration: user.googleWatchExpiration,
+    googleWatchResourceId: user.googleWatchResourceId,
+    googleWatchToken: user.googleWatchToken,
+  };
 }
 
 export async function saveUserPreferences(
@@ -189,5 +234,11 @@ export async function getGoogleAuth(userId: string) {
     refreshToken: user.refreshToken,
     expiresAt: user.expiresAt,
     lastGoogleSync: user.lastGoogleSync,
+    googleSyncToken: user.googleSyncToken,
+    googleWatchCalendarId: user.googleWatchCalendarId,
+    googleWatchChannelId: user.googleWatchChannelId,
+    googleWatchExpiration: user.googleWatchExpiration,
+    googleWatchResourceId: user.googleWatchResourceId,
+    googleWatchToken: user.googleWatchToken,
   };
 }

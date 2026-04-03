@@ -19,7 +19,7 @@ export async function GET(_req: NextRequest) {
     const calendars = await getGoogleCalendars(
       user.id,
       tokens.accessToken,
-      "",
+      tokens.refreshToken ?? "",
       tokens.accessTokenExpiresAt
         ? Math.floor(tokens.accessTokenExpiresAt / 1000)
         : 0

@@ -13,7 +13,15 @@ export default defineSchema({
     expiresAt: v.optional(v.number()),
     preferences: v.optional(v.any()),
     lastGoogleSync: v.optional(v.number()),
-  }).index("by_userId", ["userId"]),
+    googleSyncToken: v.optional(v.string()),
+    googleWatchCalendarId: v.optional(v.string()),
+    googleWatchChannelId: v.optional(v.string()),
+    googleWatchExpiration: v.optional(v.number()),
+    googleWatchResourceId: v.optional(v.string()),
+    googleWatchToken: v.optional(v.string()),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_googleWatchChannelId", ["googleWatchChannelId"]),
 
   events: defineTable({
     userId: v.string(),

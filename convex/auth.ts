@@ -14,6 +14,72 @@ const secret =
 
 export const authComponent = createClient<DataModel>(components.betterAuth);
 
+function normalizeTimestamp(value: unknown): number | null {
+  if (value == null) {
+    return null;
+  }
+
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+
+  if (typeof value === "string") {
+    const numericValue = Number(value);
+    if (Number.isFinite(numericValue)) {
+      return numericValue;
+    }
+
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+
+  if (value instanceof Date) {
+    return value.getTime();
+  }
+
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    "getTime" in value &&
+    typeof value.getTime === "function"
+  ) {
+    const timestamp = value.getTime();
+    return typeof timestamp === "number" && Number.isFinite(timestamp)
+      ? timestamp
+      : null;
+  }
+
+  return null;
+}
+
+async function getGoogleAccount(ctx: GenericCtx<DataModel>) {
+  const user = await authComponent.safeGetAuthUser(ctx);
+
+  if (!user) {
+    return null;
+  }
+
+  return await ctx.runQuery(components.betterAuth.adapter.findOne, {
+    model: "account",
+    where: [
+      { field: "userId", value: user._id as string, connector: "AND" },
+      { field: "providerId", value: "google", connector: "AND" },
+    ],
+  });
+}
+
+function getScopeValue(value: unknown): string | null {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.filter((entry) => typeof entry === "string").join(" ");
+  }
+
+  return null;
+}
+
 export const createAuth = (ctx: GenericCtx<DataModel>) => {
   return betterAuth({
     baseURL: siteUrl,
@@ -47,20 +113,19 @@ export const getCurrentUser = query({
 export const getGoogleAccessToken = mutation({
   args: {},
   handler: async (ctx) => {
-    const { auth, headers } = await authComponent.getAuth(createAuth, ctx);
-
-    const result = await auth.api.getAccessToken({
-      body: {
-        providerId: "google",
-      },
-      headers,
-    });
+    const account = await getGoogleAccount(ctx);
 
     return {
-      accessToken: result.accessToken,
-      accessTokenExpiresAt: result.accessTokenExpiresAt?.getTime() ?? null,
-      idToken: result.idToken ?? null,
-      scopes: result.scopes,
+      accessToken: account?.accessToken ?? null,
+      accessTokenExpiresAt: normalizeTimestamp(account?.accessTokenExpiresAt),
+      refreshToken: account?.refreshToken ?? null,
+      refreshTokenExpiresAt: normalizeTimestamp(account?.refreshTokenExpiresAt),
+      idToken: account?.idToken ?? null,
+      scope: getScopeValue(account?.scope),
+      scopes:
+        typeof account?.scope === "string"
+          ? account.scope.split(" ").filter(Boolean)
+          : [],
     };
   },
 });
@@ -68,22 +133,15 @@ export const getGoogleAccessToken = mutation({
 export const refreshGoogleAccessToken = mutation({
   args: {},
   handler: async (ctx) => {
-    const { auth, headers } = await authComponent.getAuth(createAuth, ctx);
-
-    const result = await auth.api.refreshToken({
-      body: {
-        providerId: "google",
-      },
-      headers,
-    });
+    const account = await getGoogleAccount(ctx);
 
     return {
-      accessToken: result.accessToken,
-      refreshToken: result.refreshToken,
-      accessTokenExpiresAt: result.accessTokenExpiresAt?.getTime() ?? null,
-      refreshTokenExpiresAt: result.refreshTokenExpiresAt?.getTime() ?? null,
-      idToken: result.idToken ?? null,
-      scopes: result.scopes,
+      accessToken: account?.accessToken ?? null,
+      refreshToken: account?.refreshToken ?? null,
+      accessTokenExpiresAt: normalizeTimestamp(account?.accessTokenExpiresAt),
+      refreshTokenExpiresAt: normalizeTimestamp(account?.refreshTokenExpiresAt),
+      idToken: account?.idToken ?? null,
+      scope: getScopeValue(account?.scope),
     };
   },
 });

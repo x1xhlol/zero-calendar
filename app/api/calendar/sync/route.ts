@@ -1,9 +1,29 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { api } from "@/convex/_generated/api";
 import { fetchAuthMutation, getCurrentAuthUser } from "@/lib/auth-server";
 import { syncWithGoogleCalendar } from "@/lib/calendar";
+import { ensureGoogleCalendarWatch } from "@/lib/google-calendar";
+import { upsertUserRecord } from "@/lib/store";
 
-export async function POST() {
+function getWebhookBaseUrl(request: NextRequest) {
+  const forwardedProto = request.headers.get("x-forwarded-proto");
+  const forwardedHost = request.headers.get("x-forwarded-host");
+  const host = forwardedHost || request.headers.get("host");
+
+  if (host) {
+    const protocol =
+      forwardedProto ||
+      (host.includes("localhost") || host.startsWith("127.0.0.1")
+        ? "http"
+        : "https");
+
+    return `${protocol}://${host}`;
+  }
+
+  return process.env.NEXT_PUBLIC_SITE_URL || process.env.CONVEX_SITE_URL;
+}
+
+export async function POST(request: NextRequest) {
   try {
     const user = await getCurrentAuthUser();
 
@@ -23,13 +43,37 @@ export async function POST() {
       );
     }
 
+    const expiresAt = tokens.accessTokenExpiresAt
+      ? Math.floor(tokens.accessTokenExpiresAt / 1000)
+      : 0;
+
+    await upsertUserRecord({
+      userId: user.id,
+      provider: "google",
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      expiresAt,
+    });
+
     const result = await syncWithGoogleCalendar(user.id, {
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
-      expiresAt: tokens.accessTokenExpiresAt
-        ? Math.floor(tokens.accessTokenExpiresAt / 1000)
-        : null,
+      expiresAt,
     });
+
+    if (result.success) {
+      try {
+        await ensureGoogleCalendarWatch({
+          userId: user.id,
+          accessToken: tokens.accessToken,
+          refreshToken: tokens.refreshToken,
+          expiresAt,
+          webhookBaseUrl: getWebhookBaseUrl(request),
+        });
+      } catch (watchError) {
+        console.error("Failed to register Google watch channel:", watchError);
+      }
+    }
 
     if (result.success) {
       return NextResponse.json({
@@ -41,6 +85,7 @@ export async function POST() {
       {
         message: result.message,
         status: "error",
+        details: result.message,
       },
       { status: 500 }
     );

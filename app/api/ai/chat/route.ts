@@ -1,4 +1,4 @@
-import { generateText, tool } from "ai";
+import { streamText, tool } from "ai";
 import { z } from "zod";
 import { calendarTools } from "@/lib/ai-tools";
 import { getCurrentAuthUser } from "@/lib/auth-server";
@@ -179,7 +179,6 @@ const tools = {
           };
         }
 
-        // Check for conflicts with new time
         const hasConflict = await calendarTools.checkForConflicts(
           userId,
           updateData.startTime,
@@ -321,8 +320,8 @@ const tools = {
         hasConflict,
         timeSlot: { start: params.startTime, end: params.endTime },
         message: hasConflict
-          ? "⚠️ Conflict detected in this time slot"
-          : "✓ Time slot is available",
+          ? "Conflict detected in this time slot"
+          : "Time slot is available",
       };
     },
   }),
@@ -407,17 +406,15 @@ export async function POST(req: Request) {
 
     const { message, conversationId, timezone, currentDate } = await req.json();
 
-    // Maintain conversation history
     let history = conversationContexts.get(conversationId) || [];
     history.push({ role: "user", content: message });
 
-    // Keep history manageable
     if (history.length > 20) {
       history = history.slice(-20);
     }
 
     try {
-      const { text } = await generateText({
+      const result = streamText({
         model: getOpenRouterModel(),
         providerOptions: getOpenRouterProviderOptions(user.id),
         system: getSystemPrompt("calendar", timezone, currentDate),
@@ -427,17 +424,18 @@ export async function POST(req: Request) {
         })),
         tools,
         toolChoice: "auto",
+        maxSteps: 5,
         temperature: 0.7,
         maxTokens: 2000,
+        onFinish: async ({ text }) => {
+          if (text) {
+            history.push({ role: "assistant", content: text });
+            conversationContexts.set(conversationId, history);
+          }
+        },
       });
 
-      history.push({ role: "assistant", content: text });
-      conversationContexts.set(conversationId, history);
-
-      return Response.json({
-        response: text,
-        conversationId,
-      });
+      return result.toDataStreamResponse();
     } catch (aiError) {
       console.error("[AI Chat] AI generation error:", aiError);
       return Response.json(

@@ -19,6 +19,7 @@ import {
 import {
   createGoogleCalendarEvent,
   getGoogleCalendarEvents,
+  syncGoogleCalendarEventsIncrementally,
   updateGoogleCalendarEvent,
 } from "./google-calendar";
 
@@ -935,8 +936,7 @@ export async function syncWithGoogleCalendar(
           provider: "google",
           accessToken: googleAuth.accessToken,
           refreshToken: googleAuth.refreshToken,
-          expiresAt:
-            googleAuth.expiresAt ?? Math.floor(Date.now() / 1000) + 3500,
+          expiresAt: googleAuth.expiresAt ?? 0,
         }
       : await getGoogleAuth(userId);
 
@@ -953,62 +953,70 @@ export async function syncWithGoogleCalendar(
       };
     }
 
-    // Define sync window: past 30 days and future 365 days
-    const start = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    const end = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
-
-    // 1. PULL: Get all events from Google Calendar
-    const googleEvents = await getGoogleCalendarEvents(
+    // 1. PULL: Process inbound Google changes first using sync tokens.
+    const inboundSync = await syncGoogleCalendarEventsIncrementally({
       userId,
-      userData.accessToken as string,
-      userData.refreshToken as string,
-      userData.expiresAt as number,
-      start,
-      end
-    );
+      accessToken: userData.accessToken as string,
+      refreshToken: userData.refreshToken as string,
+      expiresAt: userData.expiresAt as number,
+    });
 
     // 2. PUSH: Get local events and sync them to Google Calendar
     const localEvents = await listUserEvents(userId);
+    const googleEvents = localEvents.filter((event) => event.source === "google");
 
     // Filter out events that are already from Google to avoid duplicates
     const nonGoogleLocalEvents = localEvents.filter(
       (event) => event.source !== "google"
     );
 
+    const syncedGoogleIds = new Set(googleEvents.map((event) => event.id));
+
     let created = 0;
     let updated = 0;
-    const pulled = googleEvents.length;
+    let deleted = 0;
+    const pulled = inboundSync.events.length;
+    deleted += inboundSync.deleted;
 
     // Push local events to Google Calendar
     for (const event of nonGoogleLocalEvents) {
       try {
-        // Check if event already exists in Google Calendar by matching title and time
+        // Match by stored Google ID first, then fall back to title/time.
         const existingGoogleEvent = googleEvents.find(
           (ge) =>
-            ge.title === event.title &&
-            new Date(ge.start).getTime() === new Date(event.start).getTime()
+            ge.sourceId === event.sourceId ||
+            (ge.title === event.title &&
+              new Date(ge.start).getTime() === new Date(event.start).getTime())
         );
 
         if (existingGoogleEvent) {
-          // Update existing event
-          await updateGoogleCalendarEvent(
+          const syncedEvent = await updateGoogleCalendarEvent(
             userId,
             userData.accessToken as string,
             userData.refreshToken as string,
             userData.expiresAt as number,
-            { ...event, id: existingGoogleEvent.id }
+            { ...event, id: existingGoogleEvent.id, sourceId: existingGoogleEvent.sourceId }
           );
-          updated++;
+
+          if (syncedEvent) {
+            await deleteUserEvent(userId, event.id);
+            await upsertUserEvent(syncedEvent);
+            updated++;
+          }
         } else {
-          // Create new event
-          await createGoogleCalendarEvent(
+          const syncedEvent = await createGoogleCalendarEvent(
             userId,
             userData.accessToken as string,
             userData.refreshToken as string,
             userData.expiresAt as number,
             event
           );
-          created++;
+
+          if (syncedEvent) {
+            await deleteUserEvent(userId, event.id);
+            await upsertUserEvent(syncedEvent);
+            created++;
+          }
         }
       } catch (error) {
         console.error("Error syncing local event to Google Calendar:", error);
@@ -1020,8 +1028,9 @@ export async function syncWithGoogleCalendar(
 
     const message =
       "✓ Sync completed successfully.\n" +
-      `Pulled ${pulled} events from Google Calendar.\n` +
-      `Pushed ${created} new + ${updated} updated events to Google Calendar.`;
+      `Processed ${pulled} inbound Google changes.\n` +
+      `Pushed ${created} new + ${updated} updated events to Google Calendar.\n` +
+      `Removed ${deleted} deleted Google events locally.`;
 
     return {
       success: true,
@@ -1029,10 +1038,13 @@ export async function syncWithGoogleCalendar(
     };
   } catch (error) {
     console.error("Error syncing with Google Calendar:", error);
+    const message =
+      error instanceof Error
+        ? error.message
+        : "An error occurred while syncing with Google Calendar. Please try again later.";
     return {
       success: false,
-      message:
-        "An error occurred while syncing with Google Calendar. Please try again later.",
+      message,
     };
   }
 }
