@@ -250,10 +250,10 @@ export function EventDetailPanel({
                 render={({ field }) => (
                   <FormItem>
                     <FormControl>
-                      <div className="liquid-glass-input flex items-center gap-2.5 rounded-xl px-3 py-2.5">
-                        <ClockIcon className="h-3.5 w-3.5 text-white/30" />
+                      <div className="liquid-glass-input flex min-w-0 items-center gap-2.5 rounded-xl px-3 py-2.5">
+                        <ClockIcon className="h-3.5 w-3.5 shrink-0 text-white/30" />
                         <input
-                          className="flex-1 bg-transparent text-xs text-white/80 outline-none placeholder:text-white/25"
+                          className="min-w-0 flex-1 bg-transparent text-xs text-white/80 outline-none placeholder:text-white/25"
                           type="datetime-local"
                           {...field}
                         />
@@ -269,10 +269,10 @@ export function EventDetailPanel({
                 render={({ field }) => (
                   <FormItem>
                     <FormControl>
-                      <div className="liquid-glass-input flex items-center gap-2.5 rounded-xl px-3 py-2.5">
-                        <ClockIcon className="h-3.5 w-3.5 text-white/30" />
+                      <div className="liquid-glass-input flex min-w-0 items-center gap-2.5 rounded-xl px-3 py-2.5">
+                        <ClockIcon className="h-3.5 w-3.5 shrink-0 text-white/30" />
                         <input
-                          className="flex-1 bg-transparent text-xs text-white/80 outline-none placeholder:text-white/25"
+                          className="min-w-0 flex-1 bg-transparent text-xs text-white/80 outline-none placeholder:text-white/25"
                           type="datetime-local"
                           {...field}
                         />
@@ -299,10 +299,10 @@ export function EventDetailPanel({
                     render={({ field }) => (
                       <FormItem>
                         <FormControl>
-                          <div className="liquid-glass-input flex items-center gap-2.5 rounded-xl px-3 py-2.5">
-                            <MapPinIcon className="h-3.5 w-3.5 text-white/30" />
+                          <div className="liquid-glass-input flex min-w-0 items-center gap-2.5 rounded-xl px-3 py-2.5">
+                            <MapPinIcon className="h-3.5 w-3.5 shrink-0 text-white/30" />
                             <input
-                              className="flex-1 bg-transparent text-xs text-white/80 outline-none placeholder:text-white/25"
+                              className="min-w-0 flex-1 bg-transparent text-xs text-white/80 outline-none placeholder:text-white/25"
                               placeholder="Add location"
                               {...field}
                             />
@@ -319,15 +319,15 @@ export function EventDetailPanel({
                       name="category"
                       render={({ field }) => (
                         <FormItem>
-                          <div className="liquid-glass-input flex items-center gap-2.5 rounded-xl px-3 py-2.5">
-                            <TagIcon className="h-3.5 w-3.5 text-white/30" />
+                          <div className="liquid-glass-input flex min-w-0 items-center gap-2.5 rounded-xl px-3 py-2.5">
+                            <TagIcon className="h-3.5 w-3.5 shrink-0 text-white/30" />
                             <Select onValueChange={field.onChange} value={field.value}>
                               <FormControl>
-                                <SelectTrigger className="h-auto border-0 bg-transparent p-0 text-xs text-white/80 shadow-none focus:ring-0">
+                                <SelectTrigger className="h-auto min-w-0 flex-1 justify-between gap-2 border-0 bg-transparent p-0 text-xs text-white/80 shadow-none focus:ring-0 [&_svg]:text-white/40">
                                   <SelectValue placeholder="Category" />
                                 </SelectTrigger>
                               </FormControl>
-                              <SelectContent className="liquid-glass-elevated rounded-xl border-white/[0.08]">
+                              <SelectContent className="rounded-xl border border-white/[0.12] shadow-2xl">
                                 {categories.map((cat) => (
                                   <SelectItem key={cat.id} value={cat.name}>{cat.name}</SelectItem>
                                 ))}
@@ -346,10 +346,10 @@ export function EventDetailPanel({
                     render={({ field }) => (
                       <FormItem>
                         <FormControl>
-                          <div className="liquid-glass-input flex items-start gap-2.5 rounded-xl px-3 py-2.5">
-                            <TextIcon className="mt-0.5 h-3.5 w-3.5 text-white/30" />
+                          <div className="liquid-glass-input flex min-w-0 items-start gap-2.5 rounded-xl px-3 py-2.5">
+                            <TextIcon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-white/30" />
                             <Textarea
-                              className="min-h-[60px] flex-1 resize-none border-0 bg-transparent p-0 text-xs text-white/80 shadow-none placeholder:text-white/25 focus-visible:ring-0"
+                              className="min-h-[60px] min-w-0 flex-1 resize-none border-0 bg-transparent p-0 text-xs text-white/80 shadow-none placeholder:text-white/25 focus-visible:ring-0"
                               placeholder="Add notes"
                               {...field}
                             />
