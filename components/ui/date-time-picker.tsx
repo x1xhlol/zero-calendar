@@ -17,7 +17,7 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
 } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
@@ -32,7 +32,7 @@ const DEFAULT_MINUTE = 0;
 
 const HOURS = Array.from({ length: 12 }, (_, i) => i + 1);
 const MINUTES_STEP_5 = Array.from({ length: 12 }, (_, i) => i * 5);
-const WEEKDAYS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
+const WEEKDAYS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"] as const;
 
 interface DateTimePickerProps {
   disabled?: boolean;
@@ -114,6 +114,10 @@ function formatTimeValue(hours: number, minutes: number) {
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
 }
 
+function startOfVisibleMonth(d: Date) {
+  return new Date(d.getFullYear(), d.getMonth(), 1);
+}
+
 function MiniCalendar({
   onSelect,
   selected,
@@ -121,13 +125,29 @@ function MiniCalendar({
   onSelect: (date: Date) => void;
   selected: Date | null;
 }) {
-  const [viewMonth, setViewMonth] = useState(selected ?? new Date());
-
-  const firstOfMonth = new Date(
-    viewMonth.getFullYear(),
-    viewMonth.getMonth(),
-    1
+  const [viewMonth, setViewMonth] = useState(() =>
+    startOfVisibleMonth(selected ?? new Date())
   );
+
+  const selectedMonthKey = selected?.getTime();
+
+  useEffect(() => {
+    if (selectedMonthKey === undefined) {
+      return;
+    }
+    setViewMonth((prev) => {
+      const s = new Date(selectedMonthKey);
+      if (
+        prev.getFullYear() === s.getFullYear() &&
+        prev.getMonth() === s.getMonth()
+      ) {
+        return prev;
+      }
+      return startOfVisibleMonth(s);
+    });
+  }, [selectedMonthKey]);
+
+  const firstOfMonth = startOfVisibleMonth(viewMonth);
   const gridStart = startOfWeek(firstOfMonth, { weekStartsOn: 0 });
   const gridEnd = new Date(gridStart);
   gridEnd.setDate(gridStart.getDate() + 41);
@@ -136,55 +156,72 @@ function MiniCalendar({
   const goPrev = useCallback(() => setViewMonth((v) => subMonths(v, 1)), []);
   const goNext = useCallback(() => setViewMonth((v) => addMonths(v, 1)), []);
 
+  const monthLabelId = `mini-cal-${firstOfMonth.getTime()}`;
+
   return (
-    <div className="select-none px-1">
-      <div className="mb-3 flex items-center justify-between">
+    <div
+      aria-labelledby={monthLabelId}
+      className="select-none rounded-xl border border-border/80 bg-muted/25 p-3"
+      role="group"
+    >
+      <div className="mb-3 flex items-center justify-between gap-2">
         <button
-          className="flex h-7 w-7 items-center justify-center rounded-lg text-white/50 transition-colors hover:bg-white/[0.06] hover:text-white"
+          aria-label="Previous month"
+          className="flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           onClick={goPrev}
           type="button"
         >
-          <ChevronLeftIcon className="h-4 w-4" />
+          <ChevronLeftIcon aria-hidden className="size-4" />
         </button>
-        <span className="font-semibold text-[13px] text-white">
+        <span
+          className="min-w-0 truncate text-center font-heading font-semibold text-foreground text-sm tracking-tight"
+          id={monthLabelId}
+        >
           {format(viewMonth, "MMMM yyyy")}
         </span>
         <button
-          className="flex h-7 w-7 items-center justify-center rounded-lg text-white/50 transition-colors hover:bg-white/[0.06] hover:text-white"
+          aria-label="Next month"
+          className="flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           onClick={goNext}
           type="button"
         >
-          <ChevronRightIcon className="h-4 w-4" />
+          <ChevronRightIcon aria-hidden className="size-4" />
         </button>
       </div>
 
-      <div className="mb-1 grid grid-cols-7 gap-0">
-        {WEEKDAYS.map((wd) => (
+      <div className="mb-2 grid grid-cols-7 gap-1 px-0.5">
+        {WEEKDAYS.map((wd, i) => (
           <div
-            className="py-1 text-center font-medium text-[11px] text-white/30"
-            key={wd}
+            className="py-1.5 text-center font-medium text-[10px] text-muted-foreground tabular-nums tracking-tight"
+            key={`dow-${String(i)}`}
           >
             {wd}
           </div>
         ))}
       </div>
 
-      <div className="grid grid-cols-7 gap-0">
+      <div className="grid grid-cols-7 gap-1">
         {days.map((day) => {
-          const isSelected = selected && isSameDay(day, selected);
+          const isSelected = Boolean(selected && isSameDay(day, selected));
           const isToday = isSameDay(day, new Date());
           const isOutside = !isSameMonth(day, viewMonth);
 
           return (
             <button
+              aria-current={isToday ? "date" : undefined}
+              aria-label={format(day, "EEEE, MMMM d, yyyy")}
+              aria-pressed={isSelected}
               className={cn(
-                "flex h-9 w-full items-center justify-center rounded-lg text-[13px] transition-all",
-                isOutside && "text-white/15",
+                "flex aspect-square min-h-9 w-full items-center justify-center rounded-lg text-sm transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                isOutside &&
+                  "text-muted-foreground/40 hover:bg-accent/40 hover:text-muted-foreground",
                 !(isOutside || isSelected) &&
-                  "text-white/75 hover:bg-white/[0.06]",
-                isToday && !isSelected && "font-semibold text-blue-400",
+                  "text-foreground/90 hover:bg-accent/80",
+                isToday &&
+                  !isSelected &&
+                  "bg-chart-2/15 font-semibold text-foreground ring-1 ring-chart-2/40",
                 isSelected &&
-                  "bg-white font-semibold text-black shadow-[0_0_12px_rgba(255,255,255,0.15)]"
+                  "bg-primary font-semibold text-primary-foreground shadow-sm hover:bg-primary/90"
               )}
               key={day.toISOString()}
               onClick={() => onSelect(day)}
@@ -220,15 +257,15 @@ function TimeWheel({
 
   return (
     <div className="flex gap-2">
-      <div className="flex-1 overflow-hidden rounded-xl border border-white/[0.06] bg-white/[0.03]">
-        <div className="grid max-h-[160px] grid-cols-4 gap-0 overflow-y-auto p-1">
+      <div className="flex-1 overflow-hidden rounded-xl border border-border/80 bg-muted/20">
+        <div className="grid max-h-[160px] grid-cols-4 gap-1 overflow-y-auto p-1.5">
           {HOURS.map((h) => (
             <button
               className={cn(
-                "flex h-8 items-center justify-center rounded-lg text-xs transition-all",
+                "flex h-8 items-center justify-center rounded-md text-muted-foreground text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
                 h === selectedHour
-                  ? "bg-white font-semibold text-black"
-                  : "text-white/60 hover:bg-white/[0.06] hover:text-white"
+                  ? "bg-primary font-semibold text-primary-foreground shadow-sm"
+                  : "hover:bg-accent hover:text-accent-foreground"
               )}
               key={h}
               onClick={() => onTimeChange(h, selectedMinute)}
@@ -240,15 +277,15 @@ function TimeWheel({
         </div>
       </div>
 
-      <div className="w-[72px] overflow-hidden rounded-xl border border-white/[0.06] bg-white/[0.03]">
-        <div className="grid max-h-[160px] grid-cols-1 gap-0 overflow-y-auto p-1">
+      <div className="w-[72px] overflow-hidden rounded-xl border border-border/80 bg-muted/20">
+        <div className="grid max-h-[160px] grid-cols-1 gap-1 overflow-y-auto p-1.5">
           {MINUTES_STEP_5.map((m) => (
             <button
               className={cn(
-                "flex h-8 items-center justify-center rounded-lg text-xs transition-all",
+                "flex h-8 items-center justify-center rounded-md text-muted-foreground text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
                 m === closestMinute
-                  ? "bg-white font-semibold text-black"
-                  : "text-white/60 hover:bg-white/[0.06] hover:text-white"
+                  ? "bg-primary font-semibold text-primary-foreground shadow-sm"
+                  : "hover:bg-accent hover:text-accent-foreground"
               )}
               key={m}
               onClick={() => onTimeChange(selectedHour, m)}
@@ -260,14 +297,14 @@ function TimeWheel({
         </div>
       </div>
 
-      <div className="flex w-[52px] flex-col gap-1 rounded-xl border border-white/[0.06] bg-white/[0.03] p-1">
+      <div className="flex w-[52px] flex-col gap-1 rounded-xl border border-border/80 bg-muted/20 p-1.5">
         {(["AM", "PM"] as const).map((m) => (
           <button
             className={cn(
-              "flex flex-1 items-center justify-center rounded-lg font-medium text-xs transition-all",
+              "flex flex-1 items-center justify-center rounded-md font-medium text-muted-foreground text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
               m === meridiem
-                ? "bg-white text-black"
-                : "text-white/50 hover:bg-white/[0.06] hover:text-white"
+                ? "bg-primary text-primary-foreground shadow-sm"
+                : "hover:bg-accent hover:text-accent-foreground"
             )}
             key={m}
             onClick={() => onMeridiemChange(m)}
@@ -334,7 +371,7 @@ export function DateTimePicker({
     <Popover>
       <PopoverTrigger
         className={cn(
-          "flex h-10 w-full items-center justify-between gap-3 rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 text-left text-sm text-white/85 transition-colors hover:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/20 disabled:pointer-events-none disabled:opacity-50",
+          "liquid-glass-input flex h-10 w-full items-center justify-between gap-3 rounded-xl px-3 text-left text-foreground text-sm transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50",
           triggerClassName
         )}
         disabled={disabled}
@@ -342,44 +379,46 @@ export function DateTimePicker({
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-2">
             {showIcon ? (
-              <CalendarIcon className="h-4 w-4 shrink-0 text-white/35" />
+              <CalendarIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
             ) : null}
-            <span className={cn("truncate", !selectedDate && "text-white/35")}>
+            <span
+              className={cn(
+                "truncate",
+                !selectedDate && "text-muted-foreground"
+              )}
+            >
               {getDisplayLabel(selectedDate, placeholder)}
             </span>
           </span>
         </span>
-        <ChevronDownIcon className="h-4 w-4 shrink-0 text-white/35" />
+        <ChevronDownIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
       </PopoverTrigger>
 
       <PopoverContent
         align="start"
         className={cn(
-          "w-[340px] gap-0 overflow-hidden rounded-3xl border border-white/[0.08] bg-[#0c0c0f] p-0 text-white shadow-[0_24px_80px_rgba(0,0,0,0.5)] ring-1 ring-white/[0.06] backdrop-blur-2xl",
+          "w-[min(100vw-1.5rem,360px)] max-w-[360px] gap-0 overflow-hidden rounded-3xl border border-border bg-popover p-0 text-popover-foreground shadow-[var(--glass-shadow-elevated)] ring-1 ring-border/60",
           popoverClassName
         )}
         sideOffset={8}
       >
-        {/* Header */}
-        <div className="border-white/[0.06] border-b px-5 py-3.5">
-          <p className="font-medium text-[10px] text-white/30 uppercase tracking-[0.2em]">
+        <div className="border-border border-b px-5 py-3.5">
+          <p className="font-medium text-[10px] text-muted-foreground uppercase tracking-[0.2em]">
             Schedule
           </p>
-          <p className="mt-1 font-semibold text-sm text-white/90">
+          <p className="mt-1 font-heading font-semibold text-foreground text-sm">
             {selectedDate
               ? format(selectedDate, "EEEE, MMMM d")
               : "Choose a date & time"}
           </p>
         </div>
 
-        {/* Calendar */}
-        <div className="px-4 py-3">
+        <div className="px-3 py-3 sm:px-4">
           <MiniCalendar onSelect={updateDate} selected={selectedDate} />
         </div>
 
-        {/* Time */}
-        <div className="border-white/[0.06] border-t px-4 py-3">
-          <p className="mb-2 font-medium text-[10px] text-white/30 uppercase tracking-[0.2em]">
+        <div className="border-border border-t px-3 py-3 sm:px-4">
+          <p className="mb-2 font-medium text-[10px] text-muted-foreground uppercase tracking-[0.2em]">
             Time
           </p>
           <TimeWheel
@@ -391,10 +430,9 @@ export function DateTimePicker({
           />
         </div>
 
-        {/* Footer */}
-        <div className="flex items-center justify-between border-white/[0.06] border-t px-4 py-2.5">
+        <div className="flex items-center justify-between gap-2 border-border border-t px-3 py-2.5 sm:px-4">
           <Button
-            className="h-8 rounded-full border border-white/[0.06] bg-transparent px-3.5 text-white/50 text-xs hover:bg-white/[0.04] hover:text-white/80"
+            className="h-8 rounded-full border border-border bg-transparent px-3.5 text-muted-foreground text-xs hover:bg-accent hover:text-accent-foreground"
             onClick={() => onChange("")}
             type="button"
             variant="ghost"
@@ -402,7 +440,7 @@ export function DateTimePicker({
             Clear
           </Button>
           <Button
-            className="h-8 rounded-full border border-white/[0.06] bg-transparent px-3.5 text-white/50 text-xs hover:bg-white/[0.04] hover:text-white/80"
+            className="h-8 rounded-full border border-border bg-transparent px-3.5 text-muted-foreground text-xs hover:bg-accent hover:text-accent-foreground"
             onClick={setToday}
             type="button"
             variant="ghost"
@@ -450,41 +488,43 @@ export function TimePicker({
     <Popover>
       <PopoverTrigger
         className={cn(
-          "flex h-10 w-full items-center justify-between gap-3 rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 text-left text-sm text-white/85 transition-colors hover:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/20 disabled:pointer-events-none disabled:opacity-50",
+          "liquid-glass-input flex h-10 w-full items-center justify-between gap-3 rounded-xl px-3 text-left text-foreground text-sm transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50",
           triggerClassName
         )}
         disabled={disabled}
       >
         <span className="min-w-0 flex-1">
-          <span className={cn("truncate", !parsedValue && "text-white/35")}>
+          <span
+            className={cn("truncate", !parsedValue && "text-muted-foreground")}
+          >
             {parsedValue
               ? formatTimeLabel(parsedValue.hours, parsedValue.minutes)
               : placeholder}
           </span>
         </span>
-        <ChevronDownIcon className="h-4 w-4 shrink-0 text-white/35" />
+        <ChevronDownIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
       </PopoverTrigger>
 
       <PopoverContent
         align="start"
         className={cn(
-          "w-[280px] gap-0 overflow-hidden rounded-3xl border border-white/[0.08] bg-[#0c0c0f] p-0 text-white shadow-[0_24px_80px_rgba(0,0,0,0.5)] ring-1 ring-white/[0.06] backdrop-blur-2xl",
+          "w-[min(100vw-1.5rem,280px)] max-w-[280px] gap-0 overflow-hidden rounded-3xl border border-border bg-popover p-0 text-popover-foreground shadow-[var(--glass-shadow-elevated)] ring-1 ring-border/60",
           popoverClassName
         )}
         sideOffset={8}
       >
-        <div className="border-white/[0.06] border-b px-5 py-3.5">
-          <p className="font-medium text-[10px] text-white/30 uppercase tracking-[0.2em]">
+        <div className="border-border border-b px-5 py-3.5">
+          <p className="font-medium text-[10px] text-muted-foreground uppercase tracking-[0.2em]">
             Time
           </p>
-          <p className="mt-1 font-semibold text-sm text-white/90">
+          <p className="mt-1 font-heading font-semibold text-foreground text-sm">
             {parsedValue
               ? formatTimeLabel(parsedValue.hours, parsedValue.minutes)
               : "Choose a time"}
           </p>
         </div>
 
-        <div className="px-4 py-3">
+        <div className="px-3 py-3 sm:px-4">
           <TimeWheel
             meridiem={timeParts.meridiem}
             onMeridiemChange={updateMeridiem}
@@ -494,9 +534,9 @@ export function TimePicker({
           />
         </div>
 
-        <div className="flex items-center justify-between border-white/[0.06] border-t px-4 py-2.5">
+        <div className="flex items-center justify-between gap-2 border-border border-t px-3 py-2.5 sm:px-4">
           <Button
-            className="h-8 rounded-full border border-white/[0.06] bg-transparent px-3.5 text-white/50 text-xs hover:bg-white/[0.04] hover:text-white/80"
+            className="h-8 rounded-full border border-border bg-transparent px-3.5 text-muted-foreground text-xs hover:bg-accent hover:text-accent-foreground"
             onClick={() => onChange("")}
             type="button"
             variant="ghost"
@@ -504,7 +544,7 @@ export function TimePicker({
             Clear
           </Button>
           <Button
-            className="h-8 rounded-full border border-white/[0.06] bg-transparent px-3.5 text-white/50 text-xs hover:bg-white/[0.04] hover:text-white/80"
+            className="h-8 rounded-full border border-border bg-transparent px-3.5 text-muted-foreground text-xs hover:bg-accent hover:text-accent-foreground"
             onClick={() => onChange("09:00")}
             type="button"
             variant="ghost"
