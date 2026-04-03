@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  CalendarIcon,
   CheckCircleIcon,
   ClockIcon,
   LoaderIcon,
@@ -120,15 +119,10 @@ export default function InvitePage() {
     <div className="flex min-h-dvh items-center justify-center bg-[#0a0a0c] p-4">
       <div className="w-full max-w-md">
         <div className="overflow-hidden rounded-3xl border border-white/[0.08] bg-[#111114]">
-          {/* Header */}
-          <div className="flex items-center gap-3 border-white/[0.06] border-b px-6 py-5">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600">
-              <CalendarIcon className="h-5 w-5 text-white" />
-            </div>
-            <div>
-              <p className="font-semibold text-sm text-white">Zero Calendar</p>
-              <p className="text-white/40 text-xs">Event Invitation</p>
-            </div>
+          <div className="border-white/[0.06] border-b px-6 py-5">
+            <p className="font-medium text-[13px] text-white/50 tracking-tight">
+              Zero Calendar
+            </p>
           </div>
 
           {/* Content */}
