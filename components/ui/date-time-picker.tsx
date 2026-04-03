@@ -17,7 +17,7 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
@@ -30,9 +30,95 @@ const VALUE_FORMAT = "yyyy-MM-dd'T'HH:mm";
 const DEFAULT_HOUR = 9;
 const DEFAULT_MINUTE = 0;
 
-const HOURS = Array.from({ length: 12 }, (_, i) => i + 1);
-const MINUTES_STEP_5 = Array.from({ length: 12 }, (_, i) => i * 5);
+const HOURS_12 = Array.from({ length: 12 }, (_, i) => i + 1);
+const MINUTES_60 = Array.from({ length: 60 }, (_, i) => i);
 const WEEKDAYS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"] as const;
+
+/** Parse typed times: 14:37, 2:37 pm, 2:37pm, 930 → 9:30, etc. */
+function parseFlexibleTimeString(
+  raw: string
+): { hours: number; minutes: number } | null {
+  const s = raw.trim().toLowerCase().replace(/\s+/g, " ");
+  if (!s) {
+    return null;
+  }
+
+  const hasMeridiem = /\b(am|pm)\b/i.test(s);
+  const rest = s.replace(/\b(am|pm)\b/gi, "").trim();
+
+  // 24h HH:mm or H:mm
+  const m24 = rest.match(/^(\d{1,2}):(\d{2})$/);
+  if (m24 && !hasMeridiem) {
+    const h = Number(m24[1]);
+    const min = Number(m24[2]);
+    if (h >= 0 && h <= 23 && min >= 0 && min <= 59) {
+      return { hours: h, minutes: min };
+    }
+  }
+
+  // 12h h:mm with am/pm
+  const m12 = rest.match(/^(\d{1,2}):(\d{2})$/);
+  if (m12 && hasMeridiem) {
+    let h = Number(m12[1]);
+    const min = Number(m12[2]);
+    if (h < 1 || h > 12 || min < 0 || min > 59) {
+      return null;
+    }
+    const isPm = /\bpm\b/.test(s);
+    if (h === 12) {
+      h = isPm ? 12 : 0;
+    } else if (isPm) {
+      h += 12;
+    }
+    return { hours: h, minutes: min };
+  }
+
+  // Compact 3–4 digits: 930, 1337
+  const compact = rest.replace(":", "").match(/^(\d{3,4})$/);
+  if (compact && !hasMeridiem) {
+    const digits = compact[1];
+    if (digits.length === 3) {
+      const h = Number(digits[0]);
+      const min = Number(digits.slice(1));
+      if (h <= 23 && min <= 59) {
+        return { hours: h, minutes: min };
+      }
+    } else {
+      const h = Number(digits.slice(0, 2));
+      const min = Number(digits.slice(2));
+      if (h <= 23 && min <= 59) {
+        return { hours: h, minutes: min };
+      }
+    }
+  }
+
+  // Single hour with am/pm
+  const hOnly = rest.match(/^(\d{1,2})$/);
+  if (hOnly && hasMeridiem) {
+    let h = Number(hOnly[1]);
+    if (h < 1 || h > 12) {
+      return null;
+    }
+    const isPm = /\bpm\b/.test(s);
+    if (h === 12) {
+      h = isPm ? 12 : 0;
+    } else if (isPm) {
+      h += 12;
+    }
+    return { hours: h, minutes: 0 };
+  }
+
+  // 24h hour only: 9 → 09:00, 17 → 17:00
+  const h24Only = rest.match(/^(\d{1,2})$/);
+  if (h24Only && !hasMeridiem) {
+    const h = Number(h24Only[1]);
+    if (h >= 0 && h <= 23) {
+      return { hours: h, minutes: 0 };
+    }
+  }
+
+  return null;
+}
 
 interface DateTimePickerProps {
   disabled?: boolean;
@@ -72,18 +158,6 @@ function getBaseDate(date: Date | null) {
     base.setHours(DEFAULT_HOUR, DEFAULT_MINUTE, 0, 0);
   }
   return base;
-}
-
-function getTimeParts(date: Date | null) {
-  if (!date) {
-    return { hour: 9, minute: 0, meridiem: "AM" as const };
-  }
-  const h24 = date.getHours();
-  return {
-    hour: h24 % 12 || 12,
-    meridiem: (h24 >= 12 ? "PM" : "AM") as "AM" | "PM",
-    minute: date.getMinutes(),
-  };
 }
 
 function getDisplayLabel(date: Date | null, placeholder: string) {
@@ -236,83 +310,118 @@ function MiniCalendar({
   );
 }
 
-function TimeWheel({
-  meridiem,
-  onMeridiemChange,
-  onTimeChange,
-  selectedHour,
-  selectedMinute,
+const selectClass =
+  "h-10 min-w-0 flex-1 rounded-lg border border-white/[0.1] bg-white/[0.06] px-2.5 text-white/90 text-xs tabular-nums outline-none focus:border-white/20 focus:ring-2 focus:ring-white/15";
+
+function TimePickerPanel({
+  hours24,
+  minutes,
+  onCommit,
 }: {
-  meridiem: "AM" | "PM";
-  onMeridiemChange: (m: "AM" | "PM") => void;
-  onTimeChange: (hour: number, minute: number) => void;
-  selectedHour: number;
-  selectedMinute: number;
+  hours24: number;
+  minutes: number;
+  onCommit: (nextH24: number, nextMin: number) => void;
 }) {
-  const closestMinute = MINUTES_STEP_5.reduce((prev, curr) =>
-    Math.abs(curr - selectedMinute) < Math.abs(prev - selectedMinute)
-      ? curr
-      : prev
-  );
+  const inputId = useId();
+  const hour12 = hours24 % 12 || 12;
+  const meridiem: "AM" | "PM" = hours24 >= 12 ? "PM" : "AM";
+  const [draft, setDraft] = useState(() => formatTimeValue(hours24, minutes));
+
+  useEffect(() => {
+    setDraft(formatTimeValue(hours24, minutes));
+  }, [hours24, minutes]);
+
+  const apply12 = (h12: number, min: number, mer: "AM" | "PM") => {
+    let h24 = h12 % 12;
+    if (mer === "PM") {
+      h24 += 12;
+    }
+    onCommit(h24, min);
+  };
+
+  const tryCommitDraft = () => {
+    const parsed = parseFlexibleTimeString(draft);
+    if (parsed) {
+      onCommit(parsed.hours, parsed.minutes);
+      setDraft(formatTimeValue(parsed.hours, parsed.minutes));
+    } else {
+      setDraft(formatTimeValue(hours24, minutes));
+    }
+  };
 
   return (
-    <div className="flex gap-2">
-      <div className="flex-1 overflow-hidden rounded-xl border border-border/80 bg-muted/20">
-        <div className="grid max-h-[160px] grid-cols-4 gap-1 overflow-y-auto p-1.5">
-          {HOURS.map((h) => (
-            <button
-              className={cn(
-                "flex h-8 items-center justify-center rounded-md text-muted-foreground text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-                h === selectedHour
-                  ? "bg-primary font-semibold text-primary-foreground shadow-sm"
-                  : "hover:bg-accent hover:text-accent-foreground"
-              )}
-              key={h}
-              onClick={() => onTimeChange(h, selectedMinute)}
-              type="button"
-            >
-              {h}
-            </button>
-          ))}
-        </div>
+    <div className="space-y-4">
+      <div>
+        <label
+          className="mb-1.5 block font-medium text-[10px] text-white/45 uppercase tracking-[0.14em]"
+          htmlFor={inputId}
+        >
+          Type exact time
+        </label>
+        <input
+          className="h-10 w-full rounded-lg border border-white/[0.1] bg-white/[0.06] px-3 text-sm text-white/90 tabular-nums outline-none placeholder:text-white/35 focus:border-white/20 focus:ring-2 focus:ring-white/15"
+          id={inputId}
+          inputMode="text"
+          onBlur={tryCommitDraft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              tryCommitDraft();
+            }
+          }}
+          placeholder="e.g. 14:37, 2:37 pm, 937"
+          spellCheck={false}
+          type="text"
+          value={draft}
+        />
+        <p className="mt-1.5 text-[10px] text-white/35 leading-relaxed">
+          24-hour or 12-hour with am/pm. Any minute 0–59.
+        </p>
       </div>
 
-      <div className="w-[72px] overflow-hidden rounded-xl border border-border/80 bg-muted/20">
-        <div className="grid max-h-[160px] grid-cols-1 gap-1 overflow-y-auto p-1.5">
-          {MINUTES_STEP_5.map((m) => (
-            <button
-              className={cn(
-                "flex h-8 items-center justify-center rounded-md text-muted-foreground text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-                m === closestMinute
-                  ? "bg-primary font-semibold text-primary-foreground shadow-sm"
-                  : "hover:bg-accent hover:text-accent-foreground"
-              )}
-              key={m}
-              onClick={() => onTimeChange(selectedHour, m)}
-              type="button"
-            >
-              :{String(m).padStart(2, "0")}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="flex w-[52px] flex-col gap-1 rounded-xl border border-border/80 bg-muted/20 p-1.5">
-        {(["AM", "PM"] as const).map((m) => (
-          <button
-            className={cn(
-              "flex flex-1 items-center justify-center rounded-md font-medium text-muted-foreground text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-              m === meridiem
-                ? "bg-primary text-primary-foreground shadow-sm"
-                : "hover:bg-accent hover:text-accent-foreground"
-            )}
-            key={m}
-            onClick={() => onMeridiemChange(m)}
-            type="button"
+      <div>
+        <p className="mb-2 font-medium text-[10px] text-white/45 uppercase tracking-[0.14em]">
+          Or choose
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            aria-label="Hour"
+            className={selectClass}
+            onChange={(e) => apply12(Number(e.target.value), minutes, meridiem)}
+            value={hour12}
           >
-            {m}
-          </button>
-        ))}
+            {HOURS_12.map((h) => (
+              <option key={h} value={h}>
+                {h}
+              </option>
+            ))}
+          </select>
+          <span className="text-sm text-white/50">:</span>
+          <select
+            aria-label="Minute"
+            className={cn(selectClass, "min-w-[4.25rem] flex-none")}
+            onChange={(e) => apply12(hour12, Number(e.target.value), meridiem)}
+            value={minutes}
+          >
+            {MINUTES_60.map((m) => (
+              <option key={m} value={m}>
+                {String(m).padStart(2, "0")}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label="AM or PM"
+            className={cn(selectClass, "min-w-[4.5rem] flex-none")}
+            onChange={(e) =>
+              apply12(hour12, minutes, e.target.value as "AM" | "PM")
+            }
+            value={meridiem}
+          >
+            <option value="AM">AM</option>
+            <option value="PM">PM</option>
+          </select>
+        </div>
       </div>
     </div>
   );
@@ -328,7 +437,6 @@ export function DateTimePicker({
   value,
 }: DateTimePickerProps) {
   const selectedDate = parseDateTime(value);
-  const timeParts = getTimeParts(selectedDate);
 
   const updateDate = (nextDate: Date) => {
     const base = getBaseDate(selectedDate);
@@ -340,23 +448,9 @@ export function DateTimePicker({
     onChange(formatDateTimeValue(base));
   };
 
-  const updateTime = (hour: number, minute: number) => {
+  const updateTimeFromPanel = (nextH24: number, nextMin: number) => {
     const base = getBaseDate(selectedDate);
-    let h24 = hour % 12;
-    if (timeParts.meridiem === "PM") {
-      h24 += 12;
-    }
-    base.setHours(h24, minute, 0, 0);
-    onChange(formatDateTimeValue(base));
-  };
-
-  const updateMeridiem = (m: "AM" | "PM") => {
-    const base = getBaseDate(selectedDate);
-    let h24 = timeParts.hour % 12;
-    if (m === "PM") {
-      h24 += 12;
-    }
-    base.setHours(h24, timeParts.minute, 0, 0);
+    base.setHours(nextH24, nextMin, 0, 0);
     onChange(formatDateTimeValue(base));
   };
 
@@ -379,19 +473,19 @@ export function DateTimePicker({
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-2">
             {showIcon ? (
-              <CalendarIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <CalendarIcon className="h-4 w-4 shrink-0 text-white/45" />
             ) : null}
             <span
               className={cn(
-                "truncate",
-                !selectedDate && "text-muted-foreground"
+                "truncate font-medium text-white/[0.92] tabular-nums",
+                !selectedDate && "text-white/40"
               )}
             >
               {getDisplayLabel(selectedDate, placeholder)}
             </span>
           </span>
         </span>
-        <ChevronDownIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <ChevronDownIcon className="h-4 w-4 shrink-0 text-white/45" />
       </PopoverTrigger>
 
       <PopoverContent
@@ -418,15 +512,13 @@ export function DateTimePicker({
         </div>
 
         <div className="border-border border-t px-3 py-3 sm:px-4">
-          <p className="mb-2 font-medium text-[10px] text-muted-foreground uppercase tracking-[0.2em]">
+          <p className="mb-2 font-medium text-[10px] text-white/45 uppercase tracking-[0.2em]">
             Time
           </p>
-          <TimeWheel
-            meridiem={timeParts.meridiem}
-            onMeridiemChange={updateMeridiem}
-            onTimeChange={updateTime}
-            selectedHour={timeParts.hour}
-            selectedMinute={timeParts.minute}
+          <TimePickerPanel
+            hours24={selectedDate?.getHours() ?? DEFAULT_HOUR}
+            minutes={selectedDate?.getMinutes() ?? DEFAULT_MINUTE}
+            onCommit={updateTimeFromPanel}
           />
         </div>
 
@@ -492,8 +584,8 @@ export function DatePicker({
           <span className="flex items-center gap-2">
             <span
               className={cn(
-                "truncate",
-                !selectedDate && "text-muted-foreground"
+                "truncate font-medium text-white/[0.92] tabular-nums",
+                !selectedDate && "text-white/40"
               )}
             >
               {selectedDate
@@ -502,7 +594,7 @@ export function DatePicker({
             </span>
           </span>
         </span>
-        <ChevronDownIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <ChevronDownIcon className="h-4 w-4 shrink-0 text-white/45" />
       </PopoverTrigger>
 
       <PopoverContent
@@ -560,27 +652,6 @@ export function TimePicker({
   value,
 }: TimePickerProps) {
   const parsedValue = parseTimeValue(value);
-  const timeParts = getTimeParts(
-    parsedValue
-      ? new Date(2026, 0, 1, parsedValue.hours, parsedValue.minutes)
-      : null
-  );
-
-  const updateTime = (hour: number, minute: number) => {
-    let h24 = hour % 12;
-    if (timeParts.meridiem === "PM") {
-      h24 += 12;
-    }
-    onChange(formatTimeValue(h24, minute));
-  };
-
-  const updateMeridiem = (m: "AM" | "PM") => {
-    let h24 = timeParts.hour % 12;
-    if (m === "PM") {
-      h24 += 12;
-    }
-    onChange(formatTimeValue(h24, timeParts.minute));
-  };
 
   return (
     <Popover>
@@ -593,29 +664,32 @@ export function TimePicker({
       >
         <span className="min-w-0 flex-1">
           <span
-            className={cn("truncate", !parsedValue && "text-muted-foreground")}
+            className={cn(
+              "truncate font-medium text-white/[0.92] tabular-nums",
+              !parsedValue && "text-white/40"
+            )}
           >
             {parsedValue
               ? formatTimeLabel(parsedValue.hours, parsedValue.minutes)
               : placeholder}
           </span>
         </span>
-        <ChevronDownIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <ChevronDownIcon className="h-4 w-4 shrink-0 text-white/45" />
       </PopoverTrigger>
 
       <PopoverContent
         align="start"
         className={cn(
-          "w-[min(100vw-1.5rem,280px)] max-w-[280px] gap-0 overflow-hidden rounded-3xl border border-border bg-popover p-0 text-popover-foreground shadow-[var(--glass-shadow-elevated)] ring-1 ring-border/60",
+          "w-[min(100vw-1.5rem,340px)] max-w-[340px] gap-0 overflow-hidden rounded-3xl border border-white/[0.1] bg-[#141418] p-0 text-white shadow-[var(--glass-shadow-elevated)] ring-1 ring-white/[0.06]",
           popoverClassName
         )}
         sideOffset={8}
       >
-        <div className="border-border border-b px-5 py-3.5">
-          <p className="font-medium text-[10px] text-muted-foreground uppercase tracking-[0.2em]">
+        <div className="border-white/[0.08] border-b px-5 py-3.5">
+          <p className="font-medium text-[10px] text-white/45 uppercase tracking-[0.2em]">
             Time
           </p>
-          <p className="mt-1 font-heading font-semibold text-foreground text-sm">
+          <p className="mt-1 font-heading font-semibold text-sm text-white/95">
             {parsedValue
               ? formatTimeLabel(parsedValue.hours, parsedValue.minutes)
               : "Choose a time"}
@@ -623,12 +697,10 @@ export function TimePicker({
         </div>
 
         <div className="px-3 py-3 sm:px-4">
-          <TimeWheel
-            meridiem={timeParts.meridiem}
-            onMeridiemChange={updateMeridiem}
-            onTimeChange={updateTime}
-            selectedHour={timeParts.hour}
-            selectedMinute={timeParts.minute}
+          <TimePickerPanel
+            hours24={parsedValue?.hours ?? DEFAULT_HOUR}
+            minutes={parsedValue?.minutes ?? DEFAULT_MINUTE}
+            onCommit={(h, m) => onChange(formatTimeValue(h, m))}
           />
         </div>
 
