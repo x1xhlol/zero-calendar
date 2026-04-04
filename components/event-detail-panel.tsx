@@ -45,7 +45,8 @@ import type { CalendarEvent } from "@/types/calendar";
 const formSchema = z.object({
   title: z.string().min(1, "Title is required"),
   description: z.string().optional(),
-  date: z.string().min(1, "Date is required"),
+  startDate: z.string().min(1, "Start date is required"),
+  endDate: z.string().min(1, "End date is required"),
   startTime: z.string().min(1, "Start time is required"),
   endTime: z.string().min(1, "End time is required"),
   participants: z
@@ -109,7 +110,9 @@ export function EventDetailPanel({
     googleCalendars[0]?.id ??
     "";
 
-  const defaultDate = selectedDate ? format(selectedDate, "yyyy-MM-dd") : "";
+  const defaultStartDate = selectedDate
+    ? format(selectedDate, "yyyy-MM-dd")
+    : "";
   const defaultStartTime = "09:00";
   const defaultEndTime = "10:00";
 
@@ -118,7 +121,8 @@ export function EventDetailPanel({
     defaultValues: {
       title: "",
       description: "",
-      date: defaultDate,
+      startDate: defaultStartDate,
+      endDate: defaultStartDate,
       startTime: defaultStartTime,
       endTime: defaultEndTime,
       participants: [],
@@ -132,7 +136,10 @@ export function EventDetailPanel({
       form.reset({
         title: event.title || "",
         description: event.description || "",
-        date: event.start ? format(new Date(event.start), "yyyy-MM-dd") : "",
+        startDate: event.start
+          ? format(new Date(event.start), "yyyy-MM-dd")
+          : "",
+        endDate: event.end ? format(new Date(event.end), "yyyy-MM-dd") : "",
         startTime: event.start ? format(new Date(event.start), "HH:mm") : "",
         endTime: event.end ? format(new Date(event.end), "HH:mm") : "",
         participants:
@@ -147,7 +154,8 @@ export function EventDetailPanel({
       form.reset({
         title: "",
         description: "",
-        date: defaultDate,
+        startDate: defaultStartDate,
+        endDate: defaultStartDate,
         startTime: defaultStartTime,
         endTime: defaultEndTime,
         participants: [],
@@ -159,7 +167,7 @@ export function EventDetailPanel({
     event,
     mode,
     form,
-    defaultDate,
+    defaultStartDate,
     defaultStartTime,
     defaultEndTime,
     defaultGoogleCalendarId,
@@ -204,8 +212,8 @@ export function EventDetailPanel({
         : `/api/calendar/events/${event?.id}`;
       const method = isCreating ? "POST" : "PATCH";
 
-      const start = `${values.date}T${values.startTime}`;
-      const end = `${values.date}T${values.endTime}`;
+      const start = `${values.startDate}T${values.startTime}`;
+      const end = `${values.endDate}T${values.endTime}`;
 
       const response = await fetch(url, {
         method,
@@ -435,7 +443,35 @@ export function EventDetailPanel({
 
             <FormField
               control={form.control}
-              name="date"
+              name="startDate"
+              render={({ field }) => (
+                <FormItem>
+                  <FormControl>
+                    <div className={glassRow}>
+                      <CalendarIcon className="size-4 shrink-0 text-white/30" />
+                      <DatePicker
+                        onChange={(nextStartDate) => {
+                          field.onChange(nextStartDate);
+                          form.setValue("endDate", nextStartDate, {
+                            shouldDirty: true,
+                            shouldTouch: true,
+                            shouldValidate: true,
+                          });
+                        }}
+                        placeholder="Start date"
+                        triggerClassName="h-full min-h-0 flex-1 rounded-none border-0 bg-transparent px-0 text-xs shadow-none hover:bg-transparent focus-visible:ring-0"
+                        value={field.value}
+                      />
+                    </div>
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="endDate"
               render={({ field }) => (
                 <FormItem>
                   <FormControl>
@@ -443,7 +479,7 @@ export function EventDetailPanel({
                       <CalendarIcon className="size-4 shrink-0 text-white/30" />
                       <DatePicker
                         onChange={field.onChange}
-                        placeholder="Pick a date"
+                        placeholder="End date"
                         triggerClassName="h-full min-h-0 flex-1 rounded-none border-0 bg-transparent px-0 text-xs shadow-none hover:bg-transparent focus-visible:ring-0"
                         value={field.value}
                       />
