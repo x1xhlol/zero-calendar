@@ -194,9 +194,9 @@ export default function TermsOfService() {
             <p className="mt-2">
               <a
                 className="text-white underline"
-                href="mailto:lucknitelol@proton.me"
+                href="mailto:terms@zerocalendar.com"
               >
-                lucknitelol@proton.me
+                terms@zerocalendar.com
               </a>
             </p>
           </div>
