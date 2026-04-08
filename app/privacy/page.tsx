@@ -162,9 +162,9 @@ export default function PrivacyPolicy() {
             <p className="mt-2">
               <a
                 className="text-white underline"
-                href="mailto:lucknitelol@proton.me"
+                href="mailto:privacy@zerocalendar.com"
               >
-                lucknitelol@proton.me
+                privacy@zerocalendar.com
               </a>
             </p>
           </div>
