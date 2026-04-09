@@ -2,8 +2,6 @@
 
 AI-powered scheduling with natural language event creation, Google Calendar sync, invite emails, and analytics built on Next.js, Convex, and Better Auth.
 
-Repository: https://github.com/Zero-Calendar/zero-calendar
-
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/Zero-Calendar/zero-calendar&project-name=zero-calendar&repository-name=zero-calendar)
 
 ## Features
@@ -54,7 +52,7 @@ OPENROUTER_API_KEY=
 OPENROUTER_MODEL=x-ai/grok-4.1-fast
 
 RESEND_API_KEY=
-RESEND_FROM_EMAIL="Zero Calendar <noreply@zerocalendar.app>"
+RESEND_FROM_EMAIL="Zero Calendar <email@here.com>"
 ```
 
 ### 3. Start Convex
@@ -101,12 +99,7 @@ The deploy button above clones this repository into a new Vercel project. Before
 3. Configure Google OAuth for your deployed domain and Better Auth routes.
 4. Set a real `BETTER_AUTH_SECRET` for production.
 5. Configure Resend if you want invitation emails enabled.
-
-## Notes
-
-- Never commit `.env*` files or service credentials.
-- This repository is an application, so `"private": true` in `package.json` only prevents accidental npm publication.
-- `next.config.mjs` currently allows TypeScript build errors during Next.js builds. If you want stricter public CI, consider removing that override.
+   
 
 ## License
 
