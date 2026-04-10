@@ -2,7 +2,7 @@
 
 AI-powered scheduling with natural language event creation, Google Calendar sync, invite emails, and analytics built on Next.js, Convex, and Better Auth.
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/Zero-Calendar/zero-calendar&project-name=zero-calendar&repository-name=zero-calendar)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/x1xhlol/zero-calendar&project-name=zero-calendar&repository-name=zero-calendar)
 
 ## Features
 
